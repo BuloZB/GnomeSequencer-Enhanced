@@ -1,6 +1,43 @@
 local L = LibStub("AceLocale-3.0"):NewLocale("GSE", "enUS", true)
 
 L["Update"] = true
+L["Enable Actionbar Override Popup"] = true
+
+-- checksequencesforerrors / FixSequenceStructure strings
+L["Scanning GSE.Library for structural and content issues..."] = true
+L["Sequence is not a table"] = true
+L["Missing MetaData table"] = true
+L["Missing or invalid Macros table"] = true
+L["MetaData.SpecID is missing"] = true
+L["Macros array is empty (no versions defined)"] = true
+L["Macros array has gaps: %d version(s) reachable of %d total (max index %d)"] = true
+L["MetaData.%s = %d references a non-existent Macros version (max valid index: %d)"] = true
+L["Macros[%d] is not a table"] = true
+L["Macros[%d].Actions is missing or not a table"] = true
+L["Macros[%d].Actions has gaps: %d reachable of %d total (max index %d)"] = true
+L["Macros[%d].Actions[%d] is missing Type field"] = true
+L["Macros[%d].Actions[%d] has unrecognized Type: '%s'"] = true
+L["Macros[%d].Actions[%d] (If) is missing the Variable field"] = true
+L["Macros[%d].Actions[%d] (Embed) is missing the Sequence field"] = true
+L["Macros[%d].Actions[%d] (Pause) has neither Clicks nor MS"] = true
+L["Macros[%d].Actions[%d] macro text exceeds 255 characters (%d chars)"] = true
+L["Macros[%d].Actions[%d] macro text has unbalanced brackets (%d '[' vs %d ']')"] = true
+L["Macros[%d].Actions[%d] uses unrecognized slash command: /%s"] = true
+L["Issues found in '%s' (class library %d):"] = true
+L["To attempt automatic repair run: %s/run GSE.FixSequenceStructure(%d, \"%s\")%s"] = true
+L["Compile error in Macros[%d] of '%s': %s"] = true
+L["%d issue(s) found.  See above for details and fix commands."] = true
+L["Invalid class library ID: %s"] = true
+L["Sequence '%s' not found in class library %d."] = true
+L["Cleared %d pending queue entries for '%s'."] = true
+L["MetaData.%s remapped from non-existent version %d to %d."] = true
+L["'%s' has been repaired and queued for recompile.  Leave combat or /reload to apply."] = true
+L["'%s' repaired. Sequence is for class %d; button will update when that class is played."] = true
+L["Assign GSE Sequence"] = true
+L["Actionbar Overrides: The following CVars were automatically set to false as they interfere with Actionbar Overrides: "] = true
+L["A UI reload is required for the MultiClickButtons change to take effect.  Type /reload when convenient."] = true
+
+L["Show a sequence picker popup when right-clicking an empty actionbar button outside of combat."] = true
 L["Enter a name for the new sequence:"] = true
 L["Enter a name for the new variable:"] = true
 L["Create"] = true
@@ -458,6 +495,7 @@ L[
 L["Compile"] = true
 L["Unable to process content.  Fix table and try again."] = true
 L["GSE Raw Editor"] = true
+L["Raw Editor"] = true
 L["Global"] = true
 L["Move Up"] = true
 L["Move this block up one block."] = true
@@ -822,6 +860,7 @@ L["Show Sequence Name"] = true
 L["Show the Name of the Sequence"] = true
 -- #1846
 L["GSE Options Not Enabled"] = true
+L["Options Not Enabled"] = true
 L["Import String Not Recognised."] = true
 L["GSE Import Successful."] = true
 L["GSE Collection to Import."] = true
@@ -843,26 +882,41 @@ L["When enabled, this variable's function will be called automatically when the 
 L["The WoW events or GSE messages that will trigger this variable's function. Multiple events can be selected."] = true
 
 L["WhatsNew"] =
-[[|cFFFFFFFFGS|r|cFF00FFFFE|r 3.3.03 Midnight has arrived.
+[[|cFFFFFFFFGS|r|cFF00FFFFE|r 3.3.04
 
-|cFFFFD100Editor Changes — Variables & Sequences|r
-  - Editor Icons have been updated for consistent look and feel.
+|cFFFFD100Actionbar Override Popup|r
+Right-clicking an empty actionbar button while out of combat now opens a |cFF00BFFFAssign GSE Sequence|r popup, letting you bind a sequence to that button without opening the editor. Your current spec icon is shown in the menu so you always know which spec you are assigning for.
 
-|cFFFFD100New Sequence Creation|r
-|cFFFF8C00Before:|r Clicking New Sequence immediately created a sequence with a random placeholder name. You then had to rename it, find it manually in the tree, and if you closed the editor without renaming it the sequence was silently deleted.
+If you use |cFFFF8C00keybinds exclusively|r and have no actionbar overrides configured, this popup is |cFFFF8C00disabled by default|r to avoid getting in your way. You can toggle it in |cFF00BFFFOptions → Actionbar Overrides → Enable Actionbar Override Popup|r.
 
-|cFF4DBD33After:|r Clicking |cFF00BFFFNew Sequence|r opens a name prompt before anything is created. Once confirmed, the sequence is created with that name and the editor navigates to it automatically. Closing the editor without saving no longer deletes anything — what you created is what you keep.
+|cFFFFD100Dominos Support|r
+GSE's actionbar override system now works with the |cFF00BFFFDominos|r actionbar addon as well as the default Blizzard bars.
 
-|cFFFFD100New Variable Creation|r
-|cFFFF8C00Before:|r The same random-name behaviour applied to variables.
+|cFFFFD100Editor: Minimize Button|r
+The Sequence Editor now has a |cFF00BFFFminimize button|r in the top-right corner of the frame. Clicking it collapses the editor (and the Compile Template preview if open) into a small draggable |cFFFFFFFFGS|r|cFF00FFFFE|r icon showing the current sequence name. Click the icon to restore the editor. The icon position is never saved.
 
-|cFF4DBD33After:|r Clicking |cFF00BFFFNew Variable|r in the tree now opens the same name prompt. Enter the name, confirm, and the editor opens the new variable ready to edit.
+|cFFFFD100Editor: Compile Template Window|r
+The |cFF00BFFFCompile Template|r preview window now closes automatically when its parent editor is closed, and is reused on repeat clicks rather than creating a new floating window each time.
 
-|cFFFFD100Variable Event Callback UI|r
-|cFFFF8C00Before:|r Event names were chosen from a multi-select dropdown. You could only pick from the pre-populated list with no way to type a custom event name.
+|cFFFFD100Editor: Tree Panel Width Remembered|r
+The width of the sequence tree panel on the left side of the editor is now saved and restored alongside the editor's height and width.
 
-|cFF4DBD33After:|r The event field is now a text box combined with an |cFF00BFFFAdd from List|r dropdown.
- - Type any event name directly (comma-separated for multiple events).
- - Selecting from the dropdown appends to the box rather than replacing it.
- - On leaving the box, each name is validated and the status bar shows whether it is a |cFFFFD100[WoW Event]|r, a |cFF00FF96[GSE Message]|r, or a |cFF79A2FF[AceMsg]|r.
+|cFFFFD100Enhanced Sequence Checker|r
+|cFF00BFFF/gse checksequencesforerrors|r now performs a deep structural inspection of every sequence, reporting on:
+ - Missing or malformed metadata
+ - Empty, gapped, or out-of-range action arrays
+ - Macro text exceeding 255 characters
+ - Unbalanced brackets or unrecognised slash commands
+ - Missing variable or embed references
+Where issues are found, a ready-to-paste |cFF00BFFF/run|r command is shown to attempt automatic repair.
+
+|cFFFFD100Performance|r
+Internal improvements to OOC queue processing, login sequencing, and event handling reduce overhead during load, zone changes, and group changes.
+
+|cFFFFD100Bug Fixes|r
+ - Keybinds configured in GSE are no longer overridden by the actionbar override system.
+ - Actionbar override icons now display correctly for bars other than bar 1.
+ - Hovering over an actionbar override button no longer clears its icon.
+ - GSE Options are now correctly initialised on first install.
+ - Fixed several secure frame errors related to actionbar overrides.
 ]]

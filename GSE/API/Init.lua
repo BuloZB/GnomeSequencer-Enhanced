@@ -39,7 +39,7 @@ local Statics = GSE.Static
 local GNOME = "|cFFFFFFFFGS|r|cFF00FFFFE|r"
 
 -- Initialisation Functions
---- Checks for nil or empty variables.
+--- Checks for nil or empty string.
 function GSE.isEmpty(s)
     return s == nil or s == ""
 end
@@ -91,7 +91,7 @@ GSE.VersionNumber = GSE.ParseVersion(GSE.VersionString)
 --    This method prints the print queue.
 function GSE.PerformPrint()
     for k, v in ipairs(GSE.OutputQueue) do
-        print(v)
+        print(GNOME .. ": " ..v)
         GSE.OutputQueue[k] = nil
     end
 end

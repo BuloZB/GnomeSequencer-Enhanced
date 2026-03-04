@@ -16,86 +16,38 @@ function GSE:UNIT_FACTION()
     GSE.ReloadSequences()
 end
 
-function GSE:ZONE_CHANGED_NEW_AREA()
+function GSE.UpdateZoneFlags()
     local _, type, difficulty, _, _, _, _, _, _ = GetInstanceInfo()
-    if type == "pvp" then
-        GSE.PVPFlag = true
-    else
-        GSE.PVPFlag = false
-    end
-    if difficulty == 23 then -- Mythic 5 player
-        GSE.inMythic = true
-    else
-        GSE.inMythic = false
-    end
-    if difficulty == 1 then -- Normal
-        GSE.inDungeon = true
-    else
-        GSE.inDungeon = false
-    end
-    if difficulty == 2 then -- Heroic
-        GSE.inHeroic = true
-    else
-        GSE.inHeroic = false
-    end
-    if difficulty == 8 then -- Mythic+
-        GSE.inMythicPlus = true
-    else
-        GSE.inMythicPlus = false
-    end
-
-    if difficulty == 24 or difficulty == 33 then -- Timewalking  24 Dungeon, 33 raid
-        GSE.inTimeWalking = true
-    else
-        GSE.inTimeWalking = false
-    end
-    if type == "raid" then
-        GSE.inRaid = true
-    else
-        GSE.inRaid = false
-    end
-    if IsInGroup() then
-        GSE.inParty = true
-    else
-        GSE.inParty = false
-    end
-    if type == "arena" then
-        GSE.inArena = true
-    else
-        GSE.inArena = false
-    end
-    if type == "scenario" or difficulty == 167 or difficulty == 152 or difficulty == 208 then
-        GSE.inScenario = true
-    else
-        GSE.inScenario = false
-    end
-
+    GSE.PVPFlag      = (type == "pvp")
+    GSE.inMythic     = (difficulty == 23)
+    GSE.inDungeon    = (difficulty == 1)
+    GSE.inHeroic     = (difficulty == 2)
+    GSE.inMythicPlus = (difficulty == 8)
+    GSE.inTimeWalking = (difficulty == 24 or difficulty == 33)
+    GSE.inRaid       = (type == "raid")
+    GSE.inParty      = IsInGroup() and true or false
+    GSE.inArena      = (type == "arena")
+    GSE.inScenario   = (type == "scenario" or difficulty == 167 or difficulty == 152 or difficulty == 208)
     GSE.PrintDebugMessage(
         table.concat(
             {
-                "PVP: ",
-                tostring(GSE.PVPFlag),
-                " inMythic: ",
-                tostring(GSE.inMythic),
-                " inRaid: ",
-                tostring(GSE.inRaid),
-                " inDungeon ",
-                tostring(GSE.inDungeon),
-                " inHeroic ",
-                tostring(GSE.inHeroic),
-                " inArena ",
-                tostring(GSE.inArena),
-                " inTimeWalking ",
-                tostring(GSE.inTimeWalking),
-                " inMythicPlus ",
-                tostring(GSE.inMythicPlus),
-                " inScenario ",
-                tostring(GSE.inScenario)
+                "PVP: ",        tostring(GSE.PVPFlag),
+                " inMythic: ",  tostring(GSE.inMythic),
+                " inRaid: ",    tostring(GSE.inRaid),
+                " inDungeon ",  tostring(GSE.inDungeon),
+                " inHeroic ",   tostring(GSE.inHeroic),
+                " inArena ",    tostring(GSE.inArena),
+                " inTimeWalking ", tostring(GSE.inTimeWalking),
+                " inMythicPlus ",  tostring(GSE.inMythicPlus),
+                " inScenario ",    tostring(GSE.inScenario)
             }
         ),
         Statics.DebugModules["API"]
     )
-    -- Force Reload of all Sequences
+end
+
+function GSE:ZONE_CHANGED_NEW_AREA()
+    GSE.UpdateZoneFlags()
     GSE.UnsavedOptions.ReloadQueued = nil
     GSE.ReloadSequences()
 end
@@ -122,6 +74,31 @@ end
 
 local SHBT = CreateFrame("Frame", nil, nil, "SecureHandlerBaseTemplate,SecureFrameTemplate")
 
+-- Fired once per session when overrides are loaded.  Corrects CVars that interfere
+-- with actionbar overrides and tells the player what was changed.
+local actionBarCVarCheckedThisSession = false
+local function ensureActionBarCVars()
+    if actionBarCVarCheckedThisSession then return end
+    actionBarCVarCheckedThisSession = true
+    local fixed = {}
+    local needsReload = false
+    if GetCVar("ActionButtonUseKeyDown") == "1" then
+        SetCVar("ActionButtonUseKeyDown", 0)
+        table.insert(fixed, "ActionButtonUseKeyDown (CVar)")
+    end
+    if GSEOptions.Multiclick then
+        GSEOptions.Multiclick = false
+        table.insert(fixed, "MultiClickButtons (GSE Option - requires /reload to fully apply)")
+        needsReload = true
+    end
+    if #fixed > 0 then
+        GSE.Print(L["Actionbar Overrides: The following CVars were automatically set to false as they interfere with Actionbar Overrides: "] .. table.concat(fixed, ", "))
+        if needsReload then
+            GSE.Print(L["A UI reload is required for the MultiClickButtons change to take effect.  Type /reload when convenient."])
+        end
+    end
+end
+
 local function overrideActionButton(savedBind, force)
     if GSE.isEmpty(GSE.ButtonOverrides) then
         GSE.ButtonOverrides = {}
@@ -137,7 +114,37 @@ local function overrideActionButton(savedBind, force)
         string.sub(Button, 1, 4) == "NDui_" and "2" or
         "1"
     _G[Button]:SetAttribute("gse-button", Sequence)
-    if
+    if string.sub(Button, 1, 7) == "Dominos" then
+        -- Dominos uses ActionBarButtonTemplate; action slot is a secure attribute only,
+        -- not a page/slot hierarchy.  Use simplified WrapScript (no GetActionInfo lookup).
+        if not InCombatLockdown() then
+            if (not GSE.ButtonOverrides[Button] or force) then
+                SHBT:WrapScript(
+                    _G[Button],
+                    "OnClick",
+                    [[
+    local gseButton = self:GetAttribute('gse-button')
+    if gseButton then
+        self:SetAttribute('type', 'click')
+    else
+        self:SetAttribute('type', 'action')
+    end
+]]
+                )
+                _G[Button]:HookScript(
+                    "OnEnter",
+                    function(self)
+                        if not InCombatLockdown() and self:GetAttribute("gse-button") then
+                            self:SetAttribute("type", "click")
+                        end
+                    end
+                )
+                _G[Button]:SetAttribute("type", "click")
+            end
+            _G[Button]:SetAttribute("clickbutton", _G[Sequence])
+        end
+        GSE.ButtonOverrides[Button] = Sequence
+    elseif
         (string.sub(Button, 1, 3) == "BT4") or string.sub(Button, 1, 5) == "ElvUI" or
             (string.sub(Button, 1, 4) == "NDui") or
             string.sub(Button, 1, 4) == "CPB_"
@@ -161,54 +168,81 @@ local function overrideActionButton(savedBind, force)
             )
             _G[Button]:SetAttribute("type", "click")
             _G[Button]:SetAttribute("clickbutton", _G[Sequence])
-
-            SHBT:WrapScript(
-                _G[Button],
-                "OnClick",
-                [[
-                type = self:GetAttribute("type")
-                if type == "custom" then
-                    self:SetAttribute("type", "click")
-                end
-            ]]
-            )
+            -- WrapScript removed: SetState handles type management for these button addons
         end
         GSE.ButtonOverrides[Button] = Sequence
     else
         if not InCombatLockdown() then
             if (not GSE.ButtonOverrides[Button] or force) then
+                -- Detect Blizzard native action buttons - WrapScript is restricted on these
+                -- in recent patches. Use SetAttribute directly for OnClick type control,
+                -- and HookScript (non-secure) for OnEnter tooltip/type correction.
+                local isBlizzardButton =
+                    string.sub(Button, 1, 12) == "ActionButton" or
+                    string.sub(Button, 1, 22) == "MultiBarBottomLeftButton" or
+                    string.sub(Button, 1, 23) == "MultiBarBottomRightButton" or
+                    string.sub(Button, 1, 13) == "MultiBar5Button" or
+                    string.sub(Button, 1, 13) == "MultiBar6Button" or
+                    string.sub(Button, 1, 13) == "MultiBar7Button" or
+                    string.sub(Button, 1, 18) == "MultiBarRightButton" or
+                    string.sub(Button, 1, 17) == "MultiBarLeftButton"
 
-                SHBT:WrapScript(
-                    _G[Button],
-                    "OnClick",
-                    [[
-    local parent, slot = self and self:GetParent():GetParent(), self and self:GetID()
-    local page = parent and parent:GetAttribute("actionpage")
-    local action = page and slot and slot > 0 and (slot + page*12 - 12)
-
-    if action then
-        local at, id = GetActionInfo(action)
-        if at and id then
-            self:SetAttribute("type", "action")
-            self:SetAttribute('action', action)
-        else
-            self:SetAttribute("type", "click")
-        end
+                if isBlizzardButton then
+                    -- For Blizzard bars: WrapScript on OnClick is still allowed,
+                    -- but OnEnter WrapScript is blocked. Use HookScript for OnEnter.
+                    SHBT:WrapScript(
+                        _G[Button],
+                        "OnClick",
+                        [[
+    local gseButton = self:GetAttribute('gse-button')
+    if gseButton then
+        self:SetAttribute('type', 'click')
+    else
+        self:SetAttribute('type', 'action')
     end
 ]]
-                )
+                    )
+                    _G[Button]:HookScript(
+                        "OnEnter",
+                        function(self)
+                            if not InCombatLockdown() and self:GetAttribute("gse-button") then
+                                self:SetAttribute("type", "click")
+                            end
+                        end
+                    )
+                else
+                    -- For other (third-party) buttons: full WrapScript on both
+                    SHBT:WrapScript(
+                        _G[Button],
+                        "OnClick",
+                        [[
+    local gseButton = self:GetAttribute('gse-button')
+    if gseButton then
+        self:SetAttribute('type', 'click')
+    else
+        self:SetAttribute('type', 'action')
+    end
+]]
+                    )
+                    SHBT:WrapScript(
+                        _G[Button],
+                        "OnEnter",
+                        "",
+                        [[
+    if self:GetAttribute('gse-button') then
+        self:SetAttribute('type', 'click')
+    end
+]]
+                    )
+                end
                 _G[Button]:SetAttribute("type", "click")
-
-            --if number and GetBindingByKey(number) and string.upper(GetBindingByKey(number)) == string.upper(Button) then
-            --SetBindingClick(number, Button, "LeftButton")
-            --end
             end
-
             _G[Button]:SetAttribute("clickbutton", _G[Sequence])
         end
         GSE.ButtonOverrides[Button] = Sequence
     end
 end
+
 local function LoadOverrides(force)
     if GSE.isEmpty(GSE.ButtonOverrides) then
         GSE.ButtonOverrides = {}
@@ -228,6 +262,13 @@ local function LoadOverrides(force)
     if GSE.isEmpty(GSE_C["ActionBarBinds"]["LoadOuts"][GetSpec()]) then
         GSE_C["ActionBarBinds"]["LoadOuts"][GetSpec()] = {}
     end
+    -- If any overrides are configured, ensure the CVars that block them are off.
+    -- SetCVar is not combat-restricted so this runs regardless of lockdown state.
+    -- Note: GSE.isEmpty only tests for nil/"", so use next() to detect a non-empty table.
+    local specOverrides = GSE_C["ActionBarBinds"]["Specialisations"][GetSpec()]
+    if specOverrides and next(specOverrides) ~= nil then
+        ensureActionBarCVars()
+    end
     if not InCombatLockdown() then
         for k, _ in pairs(GSE.ButtonOverrides) do
             -- revert all buttons
@@ -241,7 +282,10 @@ local function LoadOverrides(force)
                 end
                 _G[k]:SetState(state, "action", tonumber(string.match(k, "%d+$")))
             else
+                _G[k]:SetAttribute("gse-button", nil)
                 _G[k]:SetAttribute("type", "action")
+                SecureHandlerUnwrapScript(_G[k], "OnClick")
+                SecureHandlerUnwrapScript(_G[k], "OnEnter")
             end
         end
         GSE.ButtonOverrides = {}
@@ -315,31 +359,46 @@ local function LoadKeyBindings(payload)
         end
     end
 end
+
 function GSE.ReloadOverrides(force)
     LoadOverrides(force)
+end
+
+function GSE.CreateActionBarOverride(buttonName, sequenceName)
+    if InCombatLockdown() then return end
+    if GSE.isEmpty(GSE_C["ActionBarBinds"]) then
+        GSE_C["ActionBarBinds"] = {}
+    end
+    if GSE.isEmpty(GSE_C["ActionBarBinds"]["Specialisations"]) then
+        GSE_C["ActionBarBinds"]["Specialisations"] = {}
+    end
+    if GSE.isEmpty(GSE_C["ActionBarBinds"]["Specialisations"][GetSpec()]) then
+        GSE_C["ActionBarBinds"]["Specialisations"][GetSpec()] = {}
+    end
+    local bind = {
+        Bind = buttonName,
+        Sequence = sequenceName
+    }
+    GSE_C["ActionBarBinds"]["Specialisations"][GetSpec()][buttonName] = bind
+    GSE.ReloadOverrides()
 end
 
 function GSE.ReloadKeyBindings()
     LoadKeyBindings(true)
 end
+
 function GSE:PLAYER_ENTERING_WORLD()
     GSE.PrintAvailable = true
     GSE.PerformPrint()
     GSE.currentZone = GetRealZoneText()
     GSE.PlayerEntered = true
-    if not GSE.VariablesLoaded then
-        LoadKeyBindings(GSE.PlayerEntered)
-        GSE.PerformReloadSequences(true)
-        LoadOverrides()
-    end
-    GSE:ZONE_CHANGED_NEW_AREA()
+    GSE.UpdateZoneFlags()
+    LoadKeyBindings(true)
+    GSE.PerformReloadSequences(true)
+    LoadOverrides()
+    GSE.ManageMacros()
     if ConsolePort then
-        C_Timer.After(
-            10,
-            function()
-                LoadOverrides()
-            end
-        )
+        C_Timer.After(10, LoadOverrides)
     end
     GSE:RegisterEvent("UPDATE_MACROS")
     if GSEOptions.shownew then
@@ -351,9 +410,6 @@ local function startup()
     local char = UnitFullName("player")
     local realm = GetRealmName()
     GSE.PerformOneOffEvents()
-    if GSE_C and GSE_C["KeyBindings"] and GSE_C["KeyBindings"][char .. "-" .. realm] then
-        GSE_C["KeyBindings"][char .. "-" .. realm] = nil
-    end
 
     if GSE.isEmpty(GSESpellCache) then
         GSESpellCache = {
@@ -401,7 +457,7 @@ local function startup()
                         vals.sequencename = k
                         vals.sequence = v
                         vals.classid = iter
-                        table.insert(GSE.OOCQueue, vals)
+                        GSE.EnqueueOOC(vals)
                     end
                 end
             end
@@ -413,70 +469,14 @@ local function startup()
     if not GSEOptions.HideLoginMessage then
         GSE.Print(
             L["Advanced Macro Compiler loaded.|r  Type "] ..
-                GSEOptions.CommandColour .. L["/gse help|r to get started."],
-            Statics.GSEString
+                GSEOptions.CommandColour .. L["/gse help|r to get started."]
         )
-    end
-
-
-    -- Added in 2.1.0
-    if GSE.isEmpty(GSEOptions.MacroResetModifiers) then
-        GSEOptions.MacroResetModifiers = {}
-        GSEOptions.MacroResetModifiers["LeftButton"] = false
-        GSEOptions.MacroResetModifiers["RighttButton"] = false
-        GSEOptions.MacroResetModifiers["MiddleButton"] = false
-        GSEOptions.MacroResetModifiers["Button4"] = false
-        GSEOptions.MacroResetModifiers["Button5"] = false
-        GSEOptions.MacroResetModifiers["LeftAlt"] = false
-        GSEOptions.MacroResetModifiers["RightAlt"] = false
-        GSEOptions.MacroResetModifiers["Alt"] = false
-        GSEOptions.MacroResetModifiers["LeftControl"] = false
-        GSEOptions.MacroResetModifiers["RightControl"] = false
-        GSEOptions.MacroResetModifiers["Control"] = false
-        GSEOptions.MacroResetModifiers["LeftShift"] = false
-        GSEOptions.MacroResetModifiers["RightShift"] = false
-        GSEOptions.MacroResetModifiers["Shift"] = false
-        GSEOptions.MacroResetModifiers["LeftAlt"] = false
-        GSEOptions.MacroResetModifiers["RightAlt"] = false
-        GSEOptions.MacroResetModifiers["AnyMod"] = false
-    end
-
-    -- Fix issue where IsAnyShiftKeyDown() was referenced instead of IsShiftKeyDown() #327
-    if not GSE.isEmpty(GSEOptions.MacroResetModifiers["AnyShift"]) then
-        GSEOptions.MacroResetModifiers["Shift"] = GSEOptions.MacroResetModifiers["AnyShift"]
-        GSEOptions.MacroResetModifiers["AnyShift"] = nil
-    end
-    if not GSE.isEmpty(GSEOptions.MacroResetModifiers["AnyControl"]) then
-        GSEOptions.MacroResetModifiers["Control"] = GSEOptions.MacroResetModifiers["AnyControl"]
-        GSEOptions.MacroResetModifiers["AnyControl"] = nil
-    end
-    if not GSE.isEmpty(GSEOptions.MacroResetModifiers["AnyAlt"]) then
-        GSEOptions.MacroResetModifiers["Alt"] = GSEOptions.MacroResetModifiers["AnyAlt"]
-        GSEOptions.MacroResetModifiers["AnyAlt"] = nil
-    end
-
-    if GSE.isEmpty(GSEOptions.showMiniMap) then
-        GSEOptions.showMiniMap = {
-            hide = true
-        }
     end
 
     GSE.WagoAnalytics:Switch("minimapIcon", GSEOptions.showMiniMap.hide)
 end
 
-function GSE:ADDON_LOADED(event, addon)
-    if addon == GNOME then
-        startup()
-    end
-end
-
-if GSE.VariablesLoaded then
-    startup()
-    LoadKeyBindings(GSE.PlayerEntered)
-    GSE.PerformReloadSequences(true)
-
-    LoadOverrides()
-end
+startup()
 
 function GSE:PLAYER_REGEN_ENABLED(unit, event, addon)
     GSE:UnregisterEvent("PLAYER_REGEN_ENABLED")
@@ -590,6 +590,7 @@ function GSE:TRAIT_CONFIG_UPDATED(_, payload)
     GSE.ReloadSequences()
     GSE:RegisterEvent("TRAIT_CONFIG_UPDATED")
 end
+
 function GSE:ACTIVE_COMBAT_CONFIG_CHANGED()
     LoadKeyBindings(GSE.PlayerEntered)
     LoadOverrides()
@@ -645,9 +646,6 @@ GSE:RegisterEvent("GROUP_ROSTER_UPDATE")
 GSE:RegisterEvent("PLAYER_LOGOUT")
 GSE:RegisterEvent("PLAYER_ENTERING_WORLD")
 GSE:RegisterEvent("PLAYER_REGEN_ENABLED")
-if not GSE.VariablesLoaded then
-    GSE:RegisterEvent("ADDON_LOADED")
-end
 GSE:RegisterEvent("ZONE_CHANGED_NEW_AREA")
 GSE:RegisterEvent("UNIT_FACTION")
 GSE:RegisterEvent("PLAYER_LEVEL_UP")
@@ -664,7 +662,6 @@ if GSE.GameMode > 10 then
     GSE:RegisterEvent("PLAYER_TALENT_UPDATE")
     GSE:RegisterEvent("SPEC_INVOLUNTARILY_CHANGED")
     GSE:RegisterEvent("TRAIT_CONFIG_UPDATED")
-
     GSE:RegisterEvent("ACTIVE_COMBAT_CONFIG_CHANGED")
 end
 
@@ -672,6 +669,7 @@ if GSE.GameMode <= 3 then
     GSE:RegisterEvent("CHARACTER_POINTS_CHANGED")
     GSE:RegisterEvent("SPELLS_CHANGED")
 end
+
 function GSE:OnEnable()
     GSE.StartOOCTimer()
 end
@@ -694,7 +692,11 @@ function GSE:ProcessOOCQueue()
         GSE:ZONE_CHANGED_NEW_AREA()
         GSE.currentZone = GetRealZoneText()
     end
-    for k, v in ipairs(GSE.OOCQueue) do
+    -- Swap the queue atomically: items enqueued during processing land in the
+    -- new table, and combat-blocked items are re-inserted cleanly with no holes.
+    local queue = GSE.OOCQueue
+    GSE.OOCQueue = {}
+    for _, v in ipairs(queue) do
         if not InCombatLockdown() then
             if v.action == "UpdateSequence" then
                 GSE.OOCUpdateSequence(v.name, v.macroversion)
@@ -722,7 +724,9 @@ function GSE:ProcessOOCQueue()
             elseif v.action == "FinishReload" then
                 GSE.UnsavedOptions.ReloadQueued = nil
             end
-            GSE.OOCQueue[k] = nil
+        else
+            -- Still in combat; put the item back so it's processed next tick.
+            table.insert(GSE.OOCQueue, v)
         end
     end
     if not GSE.isEmpty(GSE.GCDLDB) then
@@ -759,4 +763,3 @@ function GSE.CheckGUI()
 end
 
 GSE.DebugProfile("Events")
-
