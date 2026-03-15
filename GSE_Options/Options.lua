@@ -17,204 +17,6 @@ function GSE.GetOptionsTable()
         type = "group",
         name = "|cffff0000GSE:|r " .. L["Options"],
         args = {
-            troubleshooting = {
-                name = L["Troubleshooting"],
-                desc = L["Common Solutions to game quirks that seem to affect some people."],
-                type = "group",
-                order = 5,
-                args = {
-                    spellCachetitle = {
-                        type = "header",
-                        name = L["Spell Cache Editor"],
-                        order = 530
-                    },
-                    clearSpellCache = {
-                        name = L["Clear Spell Cache"],
-                        desc = L[
-                            "This function will clear the spell cache and any mappings between individual spellIDs and spellnames.."
-                        ],
-                        type = "execute",
-                        func = function(info, val)
-                            GSESpellCache = {}
-                            GSESpellCache["enUS"] = {}
-                            if GSE.isEmpty(GSESpellCache[GetLocale()]) then
-                                GSESpellCache[GetLocale()] = {}
-                            end
-                        end,
-                        order = 531
-                    },
-                    editSpellCache = {
-                        name = L["Edit Spell Cache"],
-                        desc = L[
-                            "This function will open a window enabling you to edit the spell cache and any mappings between individual spellIDs and spellnames.."
-                        ],
-                        type = "execute",
-                        func = function(info, val)
-                            GSE.CheckGUI()
-                            if GSE.UnsavedOptions["GUI"] then
-                                GSE.GUIShowSpellCacheWindow()
-                            else
-                                GSE.Print(
-                                    L["The GSE_GUI Module needs to be enabled to edit the spell cache."],
-                                    L["Options"]
-                                )
-                            end
-                        end,
-                        order = 532
-                    },
-                    cvarsettingstitle = {
-                        type = "header",
-                        name = L["CVar Settings"],
-                        order = 540
-                    },
-                    ActionButtonUseKeyDownCvar = {
-                        name = L["ActionButtonUseKeyDown"],
-                        desc = L[
-                            "This setting is a common setting used by all WoW mods.  If affects how your action buttons respond.  With this on the react when you hit the button.  With them off they react when you let them go.  In GSE's case this setting has to be off for Actionbar Overrides to work."
-                        ],
-                        type = "toggle",
-                        tristate = false,
-                        set = function(_, val)
-                            local setting
-                            if val == true then
-                                setting = 1
-                            end
-                            if val == false then
-                                setting = 0
-                            end
-                            C_CVar.SetCVar("ActionButtonUseKeyDown", setting)
-                        end,
-                        get = function(info)
-                            local setting
-                            setting = C_CVar.GetCVar("ActionButtonUseKeyDown")
-
-                            if tonumber(setting) == 1 then
-                                return true
-                            else
-                                return false
-                            end
-                        end,
-                        order = 541
-                    },
-                    buttonsettingstitle = {
-                        type = "header",
-                        name = L["Button Settings"],
-                        order = 550
-                    },
-                    disableLAB = {
-                        name = L["Use MultiClick Buttons"],
-                        desc = L[
-                            "GSE Sequences are converted to a button that responds to 'Clicks' or Keyboard keypresses (WoW calls these Hardware Events).  \n\nWhen you use a KeyBind with a sequence, WoW sends two hardware events each time. With this setting on, GSE then interprets these two clicks as one and advances your sequence one step.  With this off it would advance two steps.  \n\nIn comparison Actionbar Overrides and '/click SEQUENCE' macros only sends one hardware Event.  If you primarily use Keybinds over Actionbar Overrides over Keybinds you want this set to false."
-                        ],
-                        type = "toggle",
-                        set = function(info, val)
-                            GSEOptions.Multiclick = val
-                            StaticPopup_Show("GSE_ConfirmReloadUIDialog")
-                        end,
-                        get = function(info)
-                            return GSEOptions.Multiclick
-                        end,
-                        order = 551
-                    },
-                    disableExeperimental = {
-                        type = "header",
-                        name = L["Keybinding Tools"],
-                        order = 560
-                    },
-                    printKeyPressModifiers = {
-                        name = L["Print Active Modifiers on Click"],
-                        desc = L[
-                            "Print to the chat window if the alt, shift, control modifiers as well as the button pressed on each macro keypress."
-                        ],
-                        type = "toggle",
-                        set = function(info, val)
-                            GSEOptions.DebugPrintModConditionsOnKeyPress = val
-                            StaticPopup_Show("GSE_ConfirmReloadUIDialog")
-                        end,
-                        get = function(info)
-                            return GSEOptions.DebugPrintModConditionsOnKeyPress
-                        end,
-                        order = 561
-                    },
-                    showSequenceIcons = {
-                        name = L["Show Sequence Icons"],
-                        desc = L["Show the Sequence Icon Preview Frame"],
-                        type = "toggle",
-                        set = function(info, val)
-                            GSEOptions.SequenceIconFrame.Enabled = val
-                            if not val then
-                                GSE.SequenceIconFrame:Hide()
-                            else
-                                GSE.SequenceIconFrame:Show()
-                            end
-                        end,
-                        get = function(info)
-                            return GSEOptions.SequenceIconFrame and GSEOptions.SequenceIconFrame.Enabled or false
-                        end,
-                        order = 562
-                    },
-                    showSequenceModifiers = {
-                        name = L["Show Sequence Modifiers"],
-                        desc = L["Show the Modifiers (eg Shift, Alt, Ctrl) and Buttons (eg Left Mousebutton) that were seen by the GSE sequence at the click/press it was triggered from."],
-                        type = "toggle",
-                        set = function(info, val)
-                            GSEOptions.SequenceIconFrame.ShowIconModifiers = val
-                        end,
-                        get = function(info)
-                            return GSEOptions.SequenceIconFrame.ShowIconModifiers
-                        end,
-                        order = 563
-                    },
-                    showSequenceName = {
-                        name = L["Show Sequence Name"],
-                        desc = L["Show the Name of the Sequence"],
-                        type = "toggle",
-                        set = function(info, val)
-                            GSEOptions.SequenceIconFrame.ShowSequenceName = val
-                        end,
-                        get = function(info)
-                            return GSEOptions.SequenceIconFrame.ShowSequenceName
-                        end,
-                        order = 563
-                    },
-                    IconSize = {
-                        name = L["Preview Icon Size"],
-                        desc = L["Default is 64 pixels."],
-                        type = "input",
-                        set = function(info, val)
-                            val = tonumber(val)
-                            GSEOptions.SequenceIconFrame.IconSize = val
-                            GSE.IconFrameResize(val)
-                        end,
-                        get = function(info)
-                            return GSEOptions.SequenceIconFrame.IconSize or "64"
-                        end,
-                        order = 565
-                    },
-                    defaultImportAction = {
-                        name = L["Icon Preview Orientation"],
-                        desc = L["Horizontal or Vertical Layout"],
-                        type = "select",
-                        style = "radio",
-                        values = {
-                            ["HORIZONTAL"] = L["Horizontal"],
-                            ["VERTICAL"] = L["Vertical"]
-                        },
-                        set = function(info, val)
-                            GSEOptions.SequenceIconFrame.Orientation = val
-                        end,
-                        get = function(info)
-                            return GSEOptions.SequenceIconFrame and GSEOptions.SequenceIconFrame.Orientation or "HORIZONTAL"
-                        end,
-                        order = 564
-                    }
-                    -- disableExeperimental = {
-                    --     type = "header",
-                    --     name = L["Experimental Features"],
-                    --     order = 550
-                    -- }
-                }
-            },
             colour = {
                 name = L["Colour"],
                 desc = L["Colour and Accessibility Options"],
@@ -434,198 +236,6 @@ function GSE.GetOptionsTable()
                     }
                 }
             },
-            plugins = {
-                name = L["Plugins"],
-                desc = L["GSE Plugins"],
-                type = "group",
-                order = 6,
-                args = {
-                    title3 = {
-                        type = "header",
-                        name = L["Registered Addons"],
-                        order = 900
-                    },
-                    plugindesc = {
-                        type = "description",
-                        name = L[
-                            "GSE allows plugins to load Collections as plugins.  You can reload a collection by pressing the button below."
-                        ]
-                    }
-                }
-            },
-            windowSize = {
-                name = L["Window Sizes"],
-                desc = L["The default sizes of each window."],
-                type = "group",
-                order = 7,
-                args = {
-                    editortitle = {
-                        type = "header",
-                        name = L["Sequence Editor"],
-                        order = 10
-                    },
-                    editorHeight = {
-                        name = L["Default Editor Height"],
-                        desc = L["How many pixels high should the Editor start at.  Defaults to 700"],
-                        type = "input",
-                        set = function(info, val)
-                            if tonumber(val) >= 500 then
-                                GSEOptions.editorHeight = tonumber(val)
-                            end
-                        end,
-                        get = function(info)
-                            return tostring(GSEOptions.editorHeight)
-                        end,
-                        order = 11
-                    },
-                    editorWidth = {
-                        name = L["Default Editor Width"],
-                        desc = L["How many pixels wide should the Editor start at.  Defaults to 700"],
-                        type = "input",
-                        set = function(info, val)
-                            if tonumber(val) >= 700 then
-                                GSEOptions.editorWidth = tonumber(val)
-                            end
-                        end,
-                        get = function(info)
-                            return tostring(GSEOptions.editorWidth) and tostring(GSEOptions.editorWidth) or "700"
-                        end,
-                        order = 12
-                    },
-                    menutitle = {
-                        type = "header",
-                        name = L["Variables"],
-                        order = 13
-                    },
-                    menuHeight = {
-                        name = L["Default Menu Height"],
-                        desc = L["How many pixels high should the Menu start at.  Defaults to 500"],
-                        type = "input",
-                        set = function(info, val)
-                            if tonumber(val) >= 500 then
-                                GSEOptions.menuHeight = tonumber(val)
-                            end
-                        end,
-                        get = function(info)
-                            return (GSEOptions.menuHeight and tostring(GSEOptions.menuHeight) or "500")
-                        end,
-                        order = 14
-                    },
-                    menuWidth = {
-                        name = L["Default Menu Width"],
-                        desc = L["How many pixels wide should the Menu start at.  Defaults to 700"],
-                        type = "input",
-                        set = function(info, val)
-                            if tonumber(val) >= 700 then
-                                GSEOptions.menuWidth = tonumber(val)
-                            end
-                        end,
-                        get = function(info)
-                            return (GSEOptions.menuWidth and tostring(GSEOptions.menuWidth) or "700")
-                        end,
-                        order = 15
-                    },
-                    macrotitle = {
-                        type = "header",
-                        name = L["Macros"],
-                        order = 16
-                    },
-                    macroHeight = {
-                        name = L["Default Menu Height"],
-                        desc = L["How many pixels high should the Menu start at.  Defaults to 500"],
-                        type = "input",
-                        set = function(info, val)
-                            if tonumber(val) >= 500 then
-                                GSEOptions.macroHeight = tonumber(val)
-                            end
-                        end,
-                        get = function(info)
-                            return (GSEOptions.macroHeight and tostring(GSEOptions.menuHeight) or "500")
-                        end,
-                        order = 17
-                    },
-                    macroWidth = {
-                        name = L["Default Menu Width"],
-                        desc = L["How many pixels wide should the Menu start at.  Defaults to 700"],
-                        type = "input",
-                        set = function(info, val)
-                            if tonumber(val) >= 700 then
-                                GSEOptions.macroWidth = tonumber(val)
-                            end
-                        end,
-                        get = function(info)
-                            return (GSEOptions.macroWidth and tostring(GSEOptions.menuWidth) or "700")
-                        end,
-                        order = 18
-                    },
-                    keybindtitle = {
-                        type = "header",
-                        name = L["Keybindings"],
-                        order = 19
-                    },
-                    keybindHeight = {
-                        name = L["Default Keybinding Height"],
-                        desc = L["How many pixels high should Keybindings start at.  Defaults to 500"],
-                        type = "input",
-                        set = function(info, val)
-                            if tonumber(val) >= 500 then
-                                GSEOptions.keybindingHeight = tonumber(val)
-                            end
-                        end,
-                        get = function(info)
-                            return (GSEOptions.keybindingHeight and tostring(GSEOptions.keybindingHeight) or "500")
-                        end,
-                        order = 20
-                    },
-                    keybindWidth = {
-                        name = L["Default Keybinding Width"],
-                        desc = L["How many pixels wide should Keybinding start at.  Defaults to 700"],
-                        type = "input",
-                        set = function(info, val)
-                            if tonumber(val) >= 700 then
-                                GSEOptions.keybindingWidth = tonumber(val)
-                            end
-                        end,
-                        get = function(info)
-                            return (GSEOptions.keybindingWidth and tostring(GSEOptions.keybindingWidth) or "500")
-                        end,
-                        order = 21
-                    },
-                    debugtitle = {
-                        type = "header",
-                        name = L["Sequence Debugger"],
-                        order = 22
-                    },
-                    debugHeight = {
-                        name = L["Default Debugger Height"],
-                        desc = L["How many pixels high should the Debuger start at.  Defaults to 500"],
-                        type = "input",
-                        set = function(info, val)
-                            if tonumber(val) >= 500 then
-                                GSEOptions.debugHeight = tonumber(val)
-                            end
-                        end,
-                        get = function(info)
-                            return (GSEOptions.debugHeight and tostring(GSEOptions.debugHeight) or "500")
-                        end,
-                        order = 23
-                    },
-                    debugWidth = {
-                        name = L["Default Debugger Width"],
-                        desc = L["How many pixels wide should the Debugger start at.  Defaults to 700"],
-                        type = "input",
-                        set = function(info, val)
-                            if tonumber(val) >= 700 then
-                                GSEOptions.debugWidth = tonumber(val)
-                            end
-                        end,
-                        get = function(info)
-                            return (GSEOptions.debugWidth and tostring(GSEOptions.debugWidth) or "500")
-                        end,
-                        order = 24
-                    }
-                }
-            },
             about = {
                 name = L["About"],
                 desc = L["About GSE"],
@@ -718,112 +328,6 @@ function GSE.GetOptionsTable()
             }
         }
     }
-    if GSE.Developer then
-        OptionsTable.args.debug = {
-            name = L["Debug"],
-            desc = L["Debug Mode Options"],
-            type = "group",
-            order = -1,
-            args = {
-                title4 = {
-                    type = "header",
-                    name = L["Debug Mode Options"],
-                    order = 1
-                },
-                debug = {
-                    name = L["Enable Mod Debug Mode"],
-                    desc = L[
-                        "This option dumps extra trace information to your chat window to help troubleshoot problems with the mod"
-                    ],
-                    type = "toggle",
-                    set = function(info, val)
-                        GSEOptions.debug = val
-                        GSE.PrintDebugMessage("Debug Mode Enabled", GNOME)
-                    end,
-                    get = function(info)
-                        return GSEOptions.debug
-                    end,
-                    order = 10
-                },
-                title5 = {
-                    type = "header",
-                    name = L["Debug Output Options"],
-                    order = 20
-                },
-                debugchat = {
-                    name = L["Display debug messages in Chat Window"],
-                    desc = L["This will display debug messages in the Chat window."],
-                    type = "toggle",
-                    set = function(info, val)
-                        GSEOptions.sendDebugOutputToChatWindow = val
-                    end,
-                    get = function(info)
-                        return GSEOptions.sendDebugOutputToChatWindow
-                    end,
-                    order = 21
-                },
-                sendDebugOutputToDebugOutput = {
-                    name = L["Store Debug Messages"],
-                    desc = L[
-                        "Store output of debug messages in a Global Variable that can be referrenced by other mods."
-                    ],
-                    type = "toggle",
-                    set = function(info, val)
-                        GSEOptions.sendDebugOutputToDebugOutput = val
-                    end,
-                    get = function(info)
-                        return GSEOptions.sendDebugOutputToDebugOutput
-                    end,
-                    order = 25
-                },
-                title6 = {
-                    type = "header",
-                    name = L["Enable Debug for the following Modules"],
-                    order = 30
-                }
-            }
-        }
-        local ord = 30
-        for k, _ in pairs(Statics.DebugModules) do
-            ord = ord + 1
-            OptionsTable.args.debug.args[k] = {
-                name = k,
-                desc = L["This will display debug messages for the "] .. k,
-                type = "toggle",
-                set = function(info, val)
-                    GSEOptions.DebugModules[k] = val
-                end,
-                get = function(info)
-                    return GSEOptions.DebugModules[k]
-                end,
-                order = ord
-            }
-        end
-    end
-    local ord = 900
-    -- Add Dynamic Content Container
-    if not GSE.isEmpty(GSE.AddInPacks) then
-        for _, v in pairs(GSE.AddInPacks) do
-            ord = ord + 1
-            OptionsTable.args.plugins.args[v.Name] = {
-                name = C_AddOns.GetAddOnMetadata(v.Name, "Title") and C_AddOns.GetAddOnMetadata(v.Name, "Title") or
-                    v.Name,
-                desc = C_AddOns.GetAddOnMetadata(v.Name, "Notes") and
-                    C_AddOns.GetAddOnMetadata(v.Name, "Notes") ..
-                        "\n\n" ..
-                            C_AddOns.GetAddOnMetadata(v.Name, "Author") ..
-                                "\n" .. C_AddOns.GetAddOnMetadata(v.Name, "Version") or
-                    string.format(L["Addin Version %s contained versions for the following sequences:"], v.Name) ..
-                        string.format("\n%s", FormatSequenceNames(v.SequenceNames)),
-                type = "execute",
-                func = function(info, val)
-                    GSE:SendMessage(Statics.ReloadMessage, v.Name)
-                end,
-                order = ord
-            }
-        end
-    end
-
     return OptionsTable
 end
 
@@ -834,27 +338,327 @@ local modoptions = GSE.GetOptionsTable()
 
 local registered = false
 
-local function createBlizzOptions()
+local function createBlizzOptions(category)
 
     -- Troubleshooting
-    config:RegisterOptionsTable(addonName .. "-Troubleshooting", modoptions.args.troubleshooting)
-    dialog:AddToBlizOptions(addonName .. "-Troubleshooting", modoptions.args.troubleshooting.name, GSE.MenuCategoryID)
+    do
+        local troubleOptions = Settings.RegisterVerticalLayoutSubcategory(category, L["Troubleshooting"])
 
-    -- colour
-    config:RegisterOptionsTable(addonName .. "-Colour", modoptions.args.colour)
-    dialog:AddToBlizOptions(addonName .. "-Colour", modoptions.args.colour.name, GSE.MenuCategoryID)
+        do
+            local layout = SettingsPanel:GetLayout(troubleOptions)
+            layout:AddInitializer(Settings.CreateElementInitializer("SettingsListSectionHeaderTemplate", {name = L["Spell Cache Editor"], tooltip = L["Common Solutions to game quirks that seem to affect some people."]}))
+        end
+        do
+            local layout = SettingsPanel:GetLayout(troubleOptions)
+            layout:AddInitializer(CreateSettingsButtonInitializer(
+                L["Clear Spell Cache"],
+                L["Clear"],
+                function()
+                    GSESpellCache = {}
+                    GSESpellCache["enUS"] = {}
+                    if GSE.isEmpty(GSESpellCache[GetLocale()]) then
+                        GSESpellCache[GetLocale()] = {}
+                    end
+                end,
+                L["This function will clear the spell cache and any mappings between individual spellIDs and spellnames."],
+                true
+            ))
+        end
+        do
+            local layout = SettingsPanel:GetLayout(troubleOptions)
+            layout:AddInitializer(CreateSettingsButtonInitializer(
+                L["Edit Spell Cache"],
+                L["Edit"],
+                function()
+                    GSE.CheckGUI()
+                    if GSE.UnsavedOptions["GUI"] then
+                        GSE.GUIShowSpellCacheWindow()
+                    else
+                        GSE.Print(L["The GSE_GUI Module needs to be enabled to edit the spell cache."], L["Options"])
+                    end
+                end,
+                L["This function will open a window enabling you to edit the spell cache and any mappings between individual spellIDs and spellnames."],
+                true
+            ))
+        end
+
+        do
+            local layout = SettingsPanel:GetLayout(troubleOptions)
+            layout:AddInitializer(Settings.CreateElementInitializer("SettingsListSectionHeaderTemplate", {name = L["CVar Settings"], tooltip = L["CVar Settings"]}))
+        end
+        do
+            local function GetValue()
+                return tonumber(C_CVar.GetCVar("ActionButtonUseKeyDown")) == 1
+            end
+            local function SetValue(val)
+                C_CVar.SetCVar("ActionButtonUseKeyDown", val and 1 or 0)
+            end
+            local setting = Settings.RegisterProxySetting(troubleOptions, "ActionButtonUseKeyDown", Settings.VarType.Boolean, L["ActionButtonUseKeyDown"], false, GetValue, SetValue)
+            Settings.CreateCheckbox(troubleOptions, setting, L["This setting is a common setting used by all WoW mods.  If affects how your action buttons respond.  With this on the react when you hit the button.  With them off they react when you let them go.  In GSE's case this setting has to be off for Actionbar Overrides to work."])
+        end
+
+        do
+            local layout = SettingsPanel:GetLayout(troubleOptions)
+            layout:AddInitializer(Settings.CreateElementInitializer("SettingsListSectionHeaderTemplate", {name = L["Button Settings"], tooltip = L["Button Settings"]}))
+        end
+        do
+            local function GetValue() return GSEOptions.Multiclick end
+            local function SetValue(val)
+                GSEOptions.Multiclick = val
+                StaticPopup_Show("GSE_ConfirmReloadUIDialog")
+            end
+            local setting = Settings.RegisterProxySetting(troubleOptions, "useMulticlickButtons", Settings.VarType.Boolean, L["Use MultiClick Buttons"], true, GetValue, SetValue)
+            Settings.CreateCheckbox(troubleOptions, setting, L["GSE Sequences are converted to a button that responds to 'Clicks' or Keyboard keypresses (WoW calls these Hardware Events).  \n\nWhen you use a KeyBind with a sequence, WoW sends two hardware events each time. With this setting on, GSE then interprets these two clicks as one and advances your sequence one step.  With this off it would advance two steps.  \n\nIn comparison Actionbar Overrides and '/click SEQUENCE' macros only sends one hardware Event.  If you primarily use Keybinds over Actionbar Overrides over Keybinds you want this set to false."])
+        end
+
+        do
+            local layout = SettingsPanel:GetLayout(troubleOptions)
+            layout:AddInitializer(Settings.CreateElementInitializer("SettingsListSectionHeaderTemplate", {name = L["Keybinding Tools"], tooltip = L["Keybinding Tools"]}))
+        end
+        do
+            local function GetValue() return GSEOptions.DebugPrintModConditionsOnKeyPress end
+            local function SetValue(val)
+                GSEOptions.DebugPrintModConditionsOnKeyPress = val
+                StaticPopup_Show("GSE_ConfirmReloadUIDialog")
+            end
+            local setting = Settings.RegisterProxySetting(troubleOptions, "printKeyPressModifiers", Settings.VarType.Boolean, L["Print Active Modifiers on Click"], false, GetValue, SetValue)
+            Settings.CreateCheckbox(troubleOptions, setting, L["Print to the chat window if the alt, shift, control modifiers as well as the button pressed on each macro keypress."])
+        end
+        do
+            local function GetValue()
+                return GSEOptions.SequenceIconFrame and GSEOptions.SequenceIconFrame.Enabled or false
+            end
+            local function SetValue(val)
+                GSEOptions.SequenceIconFrame.Enabled = val
+                if not val then
+                    GSE.SequenceIconFrame:Hide()
+                else
+                    GSE.SequenceIconFrame:Show()
+                end
+            end
+            local setting = Settings.RegisterProxySetting(troubleOptions, "showSequenceIcons", Settings.VarType.Boolean, L["Show Sequence Icons"], false, GetValue, SetValue)
+            Settings.CreateCheckbox(troubleOptions, setting, L["Show the Sequence Icon Preview Frame"])
+        end
+        do
+            local function GetValue() return GSEOptions.SequenceIconFrame.ShowIconModifiers end
+            local function SetValue(val) GSEOptions.SequenceIconFrame.ShowIconModifiers = val end
+            local setting = Settings.RegisterProxySetting(troubleOptions, "showSequenceModifiers", Settings.VarType.Boolean, L["Show Sequence Modifiers"], false, GetValue, SetValue)
+            Settings.CreateCheckbox(troubleOptions, setting, L["Show the Modifiers (eg Shift, Alt, Ctrl) and Buttons (eg Left Mousebutton) that were seen by the GSE sequence at the click/press it was triggered from."])
+        end
+        do
+            local function GetValue() return GSEOptions.SequenceIconFrame.ShowSequenceName end
+            local function SetValue(val) GSEOptions.SequenceIconFrame.ShowSequenceName = val end
+            local setting = Settings.RegisterProxySetting(troubleOptions, "showSequenceName", Settings.VarType.Boolean, L["Show Sequence Name"], false, GetValue, SetValue)
+            Settings.CreateCheckbox(troubleOptions, setting, L["Show the Name of the Sequence"])
+        end
+        do
+            local function GetValue() return GSEOptions.SequenceIconFrame.IconSize or 64 end
+            local function SetValue(val)
+                GSEOptions.SequenceIconFrame.IconSize = val
+                GSE.IconFrameResize(val)
+            end
+            local setting = Settings.RegisterProxySetting(troubleOptions, "iconPreviewSize", Settings.VarType.Number, L["Preview Icon Size"], 64, GetValue, SetValue)
+            local options = Settings.CreateSliderOptions(16, 256, 8)
+            options:SetLabelFormatter(MinimalSliderWithSteppersMixin.Label.Right)
+            Settings.CreateSlider(troubleOptions, setting, options, L["Default is 64 pixels."])
+        end
+        do
+            local function GetValue()
+                return (GSEOptions.SequenceIconFrame and GSEOptions.SequenceIconFrame.Orientation or "HORIZONTAL") == "HORIZONTAL"
+            end
+            local function SetValue(val) if val then GSEOptions.SequenceIconFrame.Orientation = "HORIZONTAL" end end
+            local setting = Settings.RegisterProxySetting(troubleOptions, "iconOrientationH", Settings.VarType.Boolean, L["Horizontal Layout"], true, GetValue, SetValue)
+            Settings.CreateCheckbox(troubleOptions, setting, L["Icon Preview Orientation: Horizontal"])
+        end
+        do
+            local function GetValue()
+                return (GSEOptions.SequenceIconFrame and GSEOptions.SequenceIconFrame.Orientation or "HORIZONTAL") == "VERTICAL"
+            end
+            local function SetValue(val) if val then GSEOptions.SequenceIconFrame.Orientation = "VERTICAL" end end
+            local setting = Settings.RegisterProxySetting(troubleOptions, "iconOrientationV", Settings.VarType.Boolean, L["Vertical Layout"], false, GetValue, SetValue)
+            Settings.CreateCheckbox(troubleOptions, setting, L["Icon Preview Orientation: Vertical"])
+        end
+    end
+
+    -- Colour
+    do
+        config:RegisterOptionsTable(addonName .. "-Colour", modoptions.args.colour)
+        local colourOptions = Settings.RegisterVerticalLayoutSubcategory(category, L["Colour"])
+        local layout = SettingsPanel:GetLayout(colourOptions)
+        layout:AddInitializer(Settings.CreateElementInitializer("SettingsListSectionHeaderTemplate", {name = L["Colour and Accessibility Options"], tooltip = L["Colour and Accessibility Options"]}))
+        layout:AddInitializer(CreateSettingsButtonInitializer(
+            L["Open Colour Settings"],
+            L["Open Colour Settings"],
+            function() dialog:Open(addonName .. "-Colour") end,
+            L["Click to open the colour picker for GSE text and editor colours."],
+            true
+        ))
+    end
 
     -- Plugins
-    config:RegisterOptionsTable(addonName .. "-Plugins", modoptions.args.plugins)
-    dialog:AddToBlizOptions(addonName .. "-Plugins", modoptions.args.plugins.name, GSE.MenuCategoryID)
+    do
+        local pluginOptions = Settings.RegisterVerticalLayoutSubcategory(category, L["Plugins"])
+        do
+            local layout = SettingsPanel:GetLayout(pluginOptions)
+            layout:AddInitializer(Settings.CreateElementInitializer("SettingsListSectionHeaderTemplate", {name = L["Registered Addons"], tooltip = L["GSE Plugins"]}))
+        end
+        if GSE.isEmpty(GSE.AddInPacks) then
+            do
+                local layout = SettingsPanel:GetLayout(pluginOptions)
+                layout:AddInitializer(Settings.CreateElementInitializer("SettingsListSectionHeaderTemplate", {name = L["No plugins are currently registered."], tooltip = ""}))
+            end
+        else
+            for _, v in pairs(GSE.AddInPacks) do
+                local packName = v.Name
+                local displayName = C_AddOns.GetAddOnMetadata(packName, "Title") or packName
+                local desc = C_AddOns.GetAddOnMetadata(packName, "Notes") or
+                    string.format(L["Addin Version %s contained versions for the following sequences:"], packName) ..
+                    string.format("\n%s", FormatSequenceNames(v.SequenceNames))
+                local function GetValue() return false end
+                local function SetValue(val)
+                    if val then GSE:SendMessage(Statics.ReloadMessage, packName) end
+                end
+                local setting = Settings.RegisterProxySetting(pluginOptions, "plugin_" .. packName, Settings.VarType.Boolean, displayName, false, GetValue, SetValue)
+                Settings.CreateCheckbox(pluginOptions, setting, desc)
+            end
+        end
+    end
 
-    config:RegisterOptionsTable(addonName .. "-WindowSizes", modoptions.args.windowSize)
-    dialog:AddToBlizOptions(addonName .. "-WindowSizes", modoptions.args.windowSize.name, GSE.MenuCategoryID)
+    -- Window Sizes
+    do
+        local windowOptions = Settings.RegisterVerticalLayoutSubcategory(category, L["Window Sizes"])
 
+        do
+            local layout = SettingsPanel:GetLayout(windowOptions)
+            layout:AddInitializer(Settings.CreateElementInitializer("SettingsListSectionHeaderTemplate", {name = L["Sequence Editor"], tooltip = L["Sequence Editor"]}))
+        end
+        do
+            local function GetValue() return GSEOptions.editorHeight or 700 end
+            local function SetValue(val) if val >= 500 then GSEOptions.editorHeight = val end end
+            local setting = Settings.RegisterProxySetting(windowOptions, "editorHeight", Settings.VarType.Number, L["Default Editor Height"], 700, GetValue, SetValue)
+            local options = Settings.CreateSliderOptions(500, 2000, 10)
+            options:SetLabelFormatter(MinimalSliderWithSteppersMixin.Label.Right)
+            Settings.CreateSlider(windowOptions, setting, options, L["How many pixels high should the Editor start at.  Defaults to 700"])
+        end
+        do
+            local function GetValue() return GSEOptions.editorWidth or 700 end
+            local function SetValue(val) if val >= 700 then GSEOptions.editorWidth = val end end
+            local setting = Settings.RegisterProxySetting(windowOptions, "editorWidth", Settings.VarType.Number, L["Default Editor Width"], 700, GetValue, SetValue)
+            local options = Settings.CreateSliderOptions(700, 3000, 10)
+            options:SetLabelFormatter(MinimalSliderWithSteppersMixin.Label.Right)
+            Settings.CreateSlider(windowOptions, setting, options, L["How many pixels wide should the Editor start at.  Defaults to 700"])
+        end
+        do
+            local function GetValue() return GSEOptions.editorTreeWidth or 150 end
+            local function SetValue(val) if val >= 50 then GSEOptions.editorTreeWidth = val end end
+            local setting = Settings.RegisterProxySetting(windowOptions, "editorTreeWidth", Settings.VarType.Number, L["Default Tree Panel Width"], 150, GetValue, SetValue)
+            local options = Settings.CreateSliderOptions(50, 500, 10)
+            options:SetLabelFormatter(MinimalSliderWithSteppersMixin.Label.Right)
+            Settings.CreateSlider(windowOptions, setting, options, L["How many pixels wide should the sequence list panel on the left of the Editor be.  Defaults to 150"])
+        end
+
+        do
+            local layout = SettingsPanel:GetLayout(windowOptions)
+            layout:AddInitializer(Settings.CreateElementInitializer("SettingsListSectionHeaderTemplate", {name = L["Menu"], tooltip = L["Menu Options"]}))
+        end
+        do
+            local function GetValue()
+                local d = GSEOptions.frameLocations and GSEOptions.frameLocations.menu and GSEOptions.frameLocations.menu.direction
+                return (d and d ~= "") and d or "DOWN"
+            end
+            local function SetValue(val)
+                if GSE.UpdateMenuDirection then GSE.UpdateMenuDirection(val) end
+            end
+            local setting = Settings.RegisterProxySetting(windowOptions, "menuDirection", Settings.VarType.String, L["Growth Direction"], "DOWN", GetValue, SetValue)
+            local function GetOptions()
+                local container = Settings.CreateControlTextContainer()
+                container:Add("UP",    L["Up"])
+                container:Add("DOWN",  L["Down"])
+                container:Add("LEFT",  L["Left"])
+                container:Add("RIGHT", L["Right"])
+                return container:GetData()
+            end
+            Settings.CreateDropdown(windowOptions, setting, GetOptions, L["Direction the menu grows from the logo button."])
+        end
+        do
+            local function GetValue()
+                return GSEOptions.frameLocations and GSEOptions.frameLocations.menu and GSEOptions.frameLocations.menu.locked == true
+            end
+            local function SetValue(val)
+                if GSE.isEmpty(GSEOptions.frameLocations) then GSEOptions.frameLocations = {} end
+                if GSE.isEmpty(GSEOptions.frameLocations.menu) then GSEOptions.frameLocations.menu = {} end
+                GSEOptions.frameLocations.menu.locked = val
+                if GSE.MenuFrame then GSE.MenuFrame:SetMovable(not val) end
+            end
+            local setting = Settings.RegisterProxySetting(windowOptions, "menuLocked", Settings.VarType.Boolean, L["Lock Menu Position"], false, GetValue, SetValue)
+            Settings.CreateCheckbox(windowOptions, setting, L["Prevent the menu from being dragged to a new position."])
+        end
+
+        do
+            local layout = SettingsPanel:GetLayout(windowOptions)
+            layout:AddInitializer(Settings.CreateElementInitializer("SettingsListSectionHeaderTemplate", {name = L["Sequence Debugger"], tooltip = L["Sequence Debugger"]}))
+        end
+        do
+            local function GetValue() return GSEOptions.debugHeight or 500 end
+            local function SetValue(val) if val >= 500 then GSEOptions.debugHeight = val end end
+            local setting = Settings.RegisterProxySetting(windowOptions, "debugWindowHeight", Settings.VarType.Number, L["Default Debugger Height"], 500, GetValue, SetValue)
+            local options = Settings.CreateSliderOptions(500, 2000, 10)
+            options:SetLabelFormatter(MinimalSliderWithSteppersMixin.Label.Right)
+            Settings.CreateSlider(windowOptions, setting, options, L["How many pixels high should the Debuger start at.  Defaults to 500"])
+        end
+        do
+            local function GetValue() return GSEOptions.debugWidth or 700 end
+            local function SetValue(val) if val >= 700 then GSEOptions.debugWidth = val end end
+            local setting = Settings.RegisterProxySetting(windowOptions, "debugWindowWidth", Settings.VarType.Number, L["Default Debugger Width"], 700, GetValue, SetValue)
+            local options = Settings.CreateSliderOptions(700, 3000, 10)
+            options:SetLabelFormatter(MinimalSliderWithSteppersMixin.Label.Right)
+            Settings.CreateSlider(windowOptions, setting, options, L["How many pixels wide should the Debugger start at.  Defaults to 700"])
+        end
+    end
+
+    -- Debug (Developer only)
     if GSE.Developer then
-        -- about
-        config:RegisterOptionsTable(addonName .. "-Debug", modoptions.args.debug)
-        dialog:AddToBlizOptions(addonName .. "-Debug", modoptions.args.debug.name, GSE.MenuCategoryID)
+        local debugOptions = Settings.RegisterVerticalLayoutSubcategory(category, L["Debug"])
+        do
+            local layout = SettingsPanel:GetLayout(debugOptions)
+            layout:AddInitializer(Settings.CreateElementInitializer("SettingsListSectionHeaderTemplate", {name = L["Debug Mode Options"], tooltip = L["Debug Mode Options"]}))
+        end
+        do
+            local function GetValue() return GSEOptions.debug end
+            local function SetValue(val)
+                GSEOptions.debug = val
+                GSE.PrintDebugMessage("Debug Mode Enabled", GNOME)
+            end
+            local setting = Settings.RegisterProxySetting(debugOptions, "enableDebugMode", Settings.VarType.Boolean, L["Enable Mod Debug Mode"], false, GetValue, SetValue)
+            Settings.CreateCheckbox(debugOptions, setting, L["This option dumps extra trace information to your chat window to help troubleshoot problems with the mod"])
+        end
+        do
+            local layout = SettingsPanel:GetLayout(debugOptions)
+            layout:AddInitializer(Settings.CreateElementInitializer("SettingsListSectionHeaderTemplate", {name = L["Debug Output Options"], tooltip = L["Debug Output Options"]}))
+        end
+        do
+            local function GetValue() return GSEOptions.sendDebugOutputToChatWindow end
+            local function SetValue(val) GSEOptions.sendDebugOutputToChatWindow = val end
+            local setting = Settings.RegisterProxySetting(debugOptions, "debugChat", Settings.VarType.Boolean, L["Display debug messages in Chat Window"], false, GetValue, SetValue)
+            Settings.CreateCheckbox(debugOptions, setting, L["This will display debug messages in the Chat window."])
+        end
+        do
+            local function GetValue() return GSEOptions.sendDebugOutputToDebugOutput end
+            local function SetValue(val) GSEOptions.sendDebugOutputToDebugOutput = val end
+            local setting = Settings.RegisterProxySetting(debugOptions, "storeDebugOutput", Settings.VarType.Boolean, L["Store Debug Messages"], false, GetValue, SetValue)
+            Settings.CreateCheckbox(debugOptions, setting, L["Store output of debug messages in a Global Variable that can be referrenced by other mods."])
+        end
+        do
+            local layout = SettingsPanel:GetLayout(debugOptions)
+            layout:AddInitializer(Settings.CreateElementInitializer("SettingsListSectionHeaderTemplate", {name = L["Enable Debug for the following Modules"], tooltip = L["Enable Debug for the following Modules"]}))
+        end
+        for k, _ in pairs(Statics.DebugModules) do
+            local modKey = k
+            local function GetValue() return GSEOptions.DebugModules[modKey] end
+            local function SetValue(val) GSEOptions.DebugModules[modKey] = val end
+            local setting = Settings.RegisterProxySetting(debugOptions, "debug_" .. modKey, Settings.VarType.Boolean, modKey, false, GetValue, SetValue)
+            Settings.CreateCheckbox(debugOptions, setting, L["This will display debug messages for the "] .. modKey)
+        end
     end
 end
 
@@ -912,6 +716,14 @@ function GSE:CreateConfigPanels()
         if GSE.GameMode > 10 then
             local setting = Settings.RegisterAddOnSetting(generalOptions, "actionbaroverpopup", "actionBarOverridePopup", GSEOptions, Settings.VarType.Boolean, L["Enable Actionbar Override Popup"], true)
             Settings.CreateCheckbox(generalOptions, setting, L["Show a sequence picker popup when right-clicking an empty actionbar button outside of combat."])
+        end
+        -- Actionbar Override Watermark
+        do
+            local setting = Settings.RegisterAddOnSetting(generalOptions, "actionBarWatermark", "showActionBarWatermark", GSEOptions, Settings.VarType.Boolean, L["Show Actionbar Override Watermark"], true)
+            setting:SetValueChangedCallback(function()
+                GSE.SetActionBarWatermarkEnabled(GSEOptions.showActionBarWatermark ~= false)
+            end)
+            Settings.CreateCheckbox(generalOptions, setting, L["Show the GSE logo as a small watermark on actionbar override buttons."])
         end
         -- Hide Login Message
         do
@@ -1085,7 +897,7 @@ function GSE:CreateConfigPanels()
             end
         end
 
-        createBlizzOptions()
+        createBlizzOptions(category)
 
     end
 

@@ -472,13 +472,14 @@ function GSE.CreateEditor()
             layoutcontainer:SetLayout("Flow")
             layoutcontainer:SetFullWidth(true)
             layoutcontainer:SetHeight(30)
-            local moveUpButton = AceGUI:Create("Icon")
-            local moveDownButton = AceGUI:Create("Icon")
+            local moveUpButton, moveDownButton
 
             if GSE.isEmpty(disableMove) then
-                moveUpButton:SetImageSize(20, 20)
-                moveUpButton:SetWidth(20)
-                moveUpButton:SetHeight(20)
+                moveUpButton = AceGUI:Create("Icon")
+                moveDownButton = AceGUI:Create("Icon")
+                moveUpButton:SetImageSize(30, 30)
+                moveUpButton:SetWidth(30)
+                moveUpButton:SetHeight(30)
                 moveUpButton:SetImage(Statics.ActionsIcons.Up)
 
                 moveUpButton:SetCallback(
@@ -512,9 +513,9 @@ function GSE.CreateEditor()
                     end
                 )
 
-                moveDownButton:SetImageSize(20, 20)
-                moveDownButton:SetWidth(20)
-                moveDownButton:SetHeight(20)
+                moveDownButton:SetImageSize(30, 30)
+                moveDownButton:SetWidth(30)
+                moveDownButton:SetHeight(30)
                 moveDownButton:SetImage(Statics.ActionsIcons.Down)
 
                 moveDownButton:SetCallback(
@@ -550,14 +551,15 @@ function GSE.CreateEditor()
             end
 
             local deleteBlockButton = AceGUI:Create("Icon")
-            deleteBlockButton:SetImageSize(20, 20)
-            deleteBlockButton:SetWidth(20)
-            deleteBlockButton:SetHeight(20)
+            deleteBlockButton:SetImageSize(30, 30)
+            deleteBlockButton:SetWidth(30)
+            deleteBlockButton:SetHeight(30)
             deleteBlockButton:SetImage(Statics.ActionsIcons.Delete)
 
             deleteBlockButton:SetCallback(
                 "OnClick",
                 function()
+                    container:ReleaseChildren()
                     local delPath = {}
                     local delObj
                     for k, v in ipairs(path) do
@@ -590,15 +592,16 @@ function GSE.CreateEditor()
                 end
             )
 
-            local addLoopButton = AceGUI:Create("Icon")
-            local addActionButton = AceGUI:Create("Icon")
-            local addPauseButton = AceGUI:Create("Icon")
-            local addIfButton = AceGUI:Create("Icon")
-            local addEmbedButton = AceGUI:Create("Icon")
+            local addLoopButton, addActionButton, addPauseButton, addIfButton, addEmbedButton
             if includeAdd then
-                addActionButton:SetImageSize(20, 20)
-                addActionButton:SetWidth(20)
-                addActionButton:SetHeight(20)
+                addLoopButton = AceGUI:Create("Icon")
+                addActionButton = AceGUI:Create("Icon")
+                addPauseButton = AceGUI:Create("Icon")
+                addIfButton = AceGUI:Create("Icon")
+                addEmbedButton = AceGUI:Create("Icon")
+                addActionButton:SetImageSize(30, 30)
+                addActionButton:SetWidth(30)
+                addActionButton:SetHeight(30)
                 addActionButton:SetImage(Statics.ActionsIcons.Action)
 
                 addActionButton:SetCallback(
@@ -634,9 +637,9 @@ function GSE.CreateEditor()
                     end
                 )
 
-                addLoopButton:SetImageSize(20, 20)
-                addLoopButton:SetWidth(20)
-                addLoopButton:SetHeight(20)
+                addLoopButton:SetImageSize(30, 30)
+                addLoopButton:SetWidth(30)
+                addLoopButton:SetHeight(30)
                 addLoopButton:SetImage(Statics.ActionsIcons.Loop)
 
                 addLoopButton:SetCallback(
@@ -679,9 +682,9 @@ function GSE.CreateEditor()
                     end
                 )
 
-                addPauseButton:SetImageSize(20, 20)
-                addPauseButton:SetWidth(20)
-                addPauseButton:SetHeight(20)
+                addPauseButton:SetImageSize(30, 30)
+                addPauseButton:SetWidth(30)
+                addPauseButton:SetHeight(30)
                 addPauseButton:SetImage(Statics.ActionsIcons.Pause)
 
                 addPauseButton:SetCallback(
@@ -716,9 +719,9 @@ function GSE.CreateEditor()
                     end
                 )
 
-                addIfButton:SetImageSize(20, 20)
-                addIfButton:SetWidth(20)
-                addIfButton:SetHeight(20)
+                addIfButton:SetImageSize(30, 30)
+                addIfButton:SetWidth(30)
+                addIfButton:SetHeight(30)
                 addIfButton:SetImage(Statics.ActionsIcons.If)
 
                 addIfButton:SetCallback(
@@ -782,9 +785,9 @@ function GSE.CreateEditor()
                     end
                 )
 
-                addEmbedButton:SetImageSize(20, 20)
-                addEmbedButton:SetWidth(20)
-                addEmbedButton:SetHeight(20)
+                addEmbedButton:SetImageSize(30, 30)
+                addEmbedButton:SetWidth(30)
+                addEmbedButton:SetHeight(30)
                 addEmbedButton:SetImage(Statics.ActionsIcons.Embed)
 
                 addEmbedButton:SetCallback(
@@ -825,100 +828,12 @@ function GSE.CreateEditor()
                 )
             end
 
-            if GSE.isEmpty(disableMove) then
-                layoutcontainer:AddChild(moveUpButton)
-                layoutcontainer:AddChild(moveDownButton)
-                local spacerlabel1 = AceGUI:Create("Label")
-                spacerlabel1:SetWidth(5)
-                layoutcontainer:AddChild(spacerlabel1)
-            end
-            layoutcontainer:AddChild(headingLabel)
-            if lastPath == 1 then
-                moveUpButton:SetDisabled(true)
-            elseif lastPath == blocksThisLevel then
-                moveDownButton:SetDisabled(true)
-            end
-            if includeAdd then
-                local spacerlabel2 = AceGUI:Create("Label")
-                spacerlabel2:SetWidth(5)
-                layoutcontainer:AddChild(spacerlabel2)
-                layoutcontainer:AddChild(addActionButton)
-                layoutcontainer:AddChild(addLoopButton)
-                layoutcontainer:AddChild(addPauseButton)
-                layoutcontainer:AddChild(addIfButton)
-                layoutcontainer:AddChild(addEmbedButton)
-            end
-            local spacerlabel3 = AceGUI:Create("Label")
-            spacerlabel3:SetWidth(30)
-            layoutcontainer:AddChild(spacerlabel3)
-            if GSE.isEmpty(disableMove) then
-                local disableBlock = AceGUI:Create("CheckBox")
-                disableBlock:SetType("checkbox")
-                disableBlock:SetWidth(130)
-                disableBlock:SetTriState(false)
-                disableBlock:SetLabel(L["Disable Block"])
-                layoutcontainer:AddChild(disableBlock)
-                disableBlock:SetValue(editframe.Sequence.Macros[version].Actions[path].Disabled)
-                local highlightTexture = container.frame:CreateTexture(nil, "BACKGROUND")
-                highlightTexture:SetAllPoints(true)
-
-                disableBlock:SetCallback(
-                    "OnValueChanged",
-                    function(sel, object, value)
-                        editframe.Sequence.Macros[version].Actions[path].Disabled = value
-                        if value == true then
-                            highlightTexture:SetColorTexture(1, 0, 0, 0.15)
-                        else
-                            highlightTexture:SetColorTexture(1, 0, 0, 0)
-                        end
-                    end
-                )
-                if editframe.Sequence.Macros[version].Actions[path].Disabled == true then
-                    highlightTexture:SetColorTexture(1, 0, 0, 0.15)
-                else
-                    highlightTexture:SetColorTexture(1, 0, 0, 0)
-                end
-
-                container:SetCallback(
-                    "OnRelease",
-                    function(self, obj, value)
-                        highlightTexture:SetColorTexture(0, 0, 0, 0)
-                    end
-                )
-                disableBlock:SetCallback(
-                    "OnEnter",
-                    function()
-                        GSE.CreateToolTip(
-                            L["Disable Block"],
-                            L[
-                                "Disable this block so that it is not executed. If this is a container block, like a loop, all the blocks within it will also be disabled."
-                            ],
-                            editframe
-                        )
-                    end
-                )
-                disableBlock:SetCallback(
-                    "OnLeave",
-                    function()
-                        GSE.ClearTooltip(editframe)
-                    end
-                )
-            end
-            local spacerlabel4 = AceGUI:Create("Label")
-            spacerlabel4:SetWidth(15)
-            layoutcontainer:AddChild(spacerlabel4)
-            if not disableDelete then
-                layoutcontainer:AddChild(deleteBlockButton)
-            end
-            local spacerlabel5 = AceGUI:Create("Label")
-            spacerlabel5:SetWidth(15)
-            layoutcontainer:AddChild(spacerlabel5)
-
+            -- Build patheditbox widget up front so it can be inserted early in the layout
             local textpath = GSE.SafeConcat(path, ".")
-            local patheditbox = AceGUI:Create("EditBox")
+            local patheditbox
             if GSE.isEmpty(disableMove) then
-                patheditbox:SetLabel(L["Block Path"])
-                patheditbox:SetWidth(80)
+                patheditbox = AceGUI:Create("EditBox")
+                patheditbox:SetWidth(40)
                 patheditbox:SetCallback(
                     "OnEnterPressed",
                     function(obj, event, key)
@@ -1009,13 +924,120 @@ function GSE.CreateEditor()
                         GSE.ClearTooltip(editframe)
                     end
                 )
-
                 patheditbox:DisableButton(true)
-
                 patheditbox:SetText(textpath)
-                layoutcontainer:AddChild(patheditbox)
             end
-            return layoutcontainer
+
+            -- Build disableBlock widget up front so it can be inserted near the end
+            local disableBlock, highlightTexture
+            if GSE.isEmpty(disableMove) then
+                disableBlock = AceGUI:Create("CheckBox")
+                disableBlock:SetType("checkbox")
+                disableBlock:SetWidth(130)
+                disableBlock:SetTriState(false)
+                disableBlock:SetLabel(L["Disable Block"])
+                disableBlock:SetValue(editframe.Sequence.Macros[version].Actions[path].Disabled)
+                highlightTexture = container.frame:CreateTexture(nil, "BACKGROUND")
+                highlightTexture:SetAllPoints(true)
+
+                disableBlock:SetCallback(
+                    "OnValueChanged",
+                    function(sel, object, value)
+                        editframe.Sequence.Macros[version].Actions[path].Disabled = value
+                        if value == true then
+                            highlightTexture:SetColorTexture(1, 0, 0, 0.15)
+                        else
+                            highlightTexture:SetColorTexture(1, 0, 0, 0)
+                        end
+                    end
+                )
+                if editframe.Sequence.Macros[version].Actions[path].Disabled == true then
+                    highlightTexture:SetColorTexture(1, 0, 0, 0.15)
+                else
+                    highlightTexture:SetColorTexture(1, 0, 0, 0)
+                end
+
+                container:SetCallback(
+                    "OnRelease",
+                    function(self, obj, value)
+                        highlightTexture:SetColorTexture(0, 0, 0, 0)
+                    end
+                )
+                disableBlock:SetCallback(
+                    "OnEnter",
+                    function()
+                        GSE.CreateToolTip(
+                            L["Disable Block"],
+                            L[
+                                "Disable this block so that it is not executed. If this is a container block, like a loop, all the blocks within it will also be disabled."
+                            ],
+                            editframe
+                        )
+                    end
+                )
+                disableBlock:SetCallback(
+                    "OnLeave",
+                    function()
+                        GSE.ClearTooltip(editframe)
+                    end
+                )
+            end
+
+            -- 1. Up / Down
+            if GSE.isEmpty(disableMove) then
+                moveUpButton:SetDisabled(lastPath == 1)
+                moveDownButton:SetDisabled(lastPath == blocksThisLevel)
+                layoutcontainer:AddChild(moveUpButton)
+                layoutcontainer:AddChild(moveDownButton)
+                local spacerlabel1 = AceGUI:Create("Label")
+                spacerlabel1:SetWidth(5)
+                layoutcontainer:AddChild(spacerlabel1)
+            end
+
+            -- 2. Block path
+            if GSE.isEmpty(disableMove) then
+                layoutcontainer:AddChild(patheditbox)
+                local spacerlabelPath = AceGUI:Create("Label")
+                spacerlabelPath:SetWidth(5)
+                layoutcontainer:AddChild(spacerlabelPath)
+            end
+
+            -- 3. Icon + heading
+            layoutcontainer:AddChild(headingLabel)
+
+            -- 4. Toolbar add buttons
+            if includeAdd then
+                local spacerlabel2 = AceGUI:Create("Label")
+                spacerlabel2:SetWidth(5)
+                layoutcontainer:AddChild(spacerlabel2)
+                layoutcontainer:AddChild(addActionButton)
+                layoutcontainer:AddChild(addLoopButton)
+                layoutcontainer:AddChild(addPauseButton)
+                layoutcontainer:AddChild(addIfButton)
+                layoutcontainer:AddChild(addEmbedButton)
+            end
+
+            -- Returns a finalize function: callers must call it after injecting any
+            -- block-specific widgets so that Disable Block and Delete appear last.
+            local function finalizeToolbar()
+                -- 5. Disable Block
+                if GSE.isEmpty(disableMove) then
+                    local spacerlabel3 = AceGUI:Create("Label")
+                    spacerlabel3:SetWidth(15)
+                    layoutcontainer:AddChild(spacerlabel3)
+                    layoutcontainer:AddChild(disableBlock)
+                end
+
+                -- 6. Delete (last)
+                local spacerlabel4 = AceGUI:Create("Label")
+                spacerlabel4:SetWidth(15)
+                layoutcontainer:AddChild(spacerlabel4)
+                if not disableDelete then
+                    layoutcontainer:AddChild(deleteBlockButton)
+                end
+            end
+
+            return layoutcontainer, finalizeToolbar
         end
         local function drawAction(pcontainer, action, version, keyPath, treepath)
 
@@ -1024,10 +1046,34 @@ function GSE.CreateEditor()
             label:SetFontObject(GameFontNormalLarge)
             pcontainer:AddChild(label)
 
-            local hlabel = AceGUI:Create("Label")
-            hlabel:SetText(string.format(L["Block Type: %s"], Statics.Actions[action.Type]))
-            hlabel:SetFontObject(GameFontNormalLarge)
-            hlabel:SetColor(GSE.GUIGetColour(GSEOptions.KEYWORD))
+            local hlabelIcon = AceGUI:Create("Icon")
+            hlabelIcon:SetImage(Statics.ActionsIcons[action.Type] or Statics.ActionsIcons.Action)
+            hlabelIcon:SetImageSize(15, 15)
+            hlabelIcon:SetWidth(15)
+            hlabelIcon:SetHeight(20)
+            hlabelIcon.image:SetTexCoord(0.16, 0.84, 0.16, 0.84)
+            hlabelIcon.image:SetDesaturated(true)
+            hlabelIcon.image:ClearAllPoints()
+            hlabelIcon.image:SetPoint("BOTTOMLEFT", hlabelIcon.frame, "BOTTOMLEFT", 0, 3)
+            hlabelIcon.frame:EnableMouse(false)
+            hlabelIcon:SetCallback("OnRelease", function(self)
+                self.image:SetDesaturated(false)
+                self.image:ClearAllPoints()
+                self.image:SetPoint("TOP", 0, -5)
+            end)
+
+            local hlabelText = AceGUI:Create("Label")
+            hlabelText:SetText(action.Type == Statics.Actions.Repeat and Statics.Actions.Action or Statics.Actions[action.Type])
+            hlabelText:SetFontObject(GameFontNormalLarge)
+            hlabelText:SetColor(GSE.GUIGetColour(GSEOptions.KEYWORD))
+            hlabelText:SetWidth(80)
+
+            local hlabel = AceGUI:Create("SimpleGroup")
+            hlabel:SetLayout("Flow")
+            hlabel:SetWidth(115)
+            hlabel:SetHeight(30)
+            hlabel:AddChild(hlabelIcon)
+            hlabel:AddChild(hlabelText)
             local includeAdd = true
 
             if action.Type == Statics.Actions.Pause then
@@ -1155,7 +1201,9 @@ function GSE.CreateEditor()
                 end
                 linegroup1:AddChild(msvalueeditbox)
 
-                block:AddChild(GetBlockToolbar(version, keyPath, treepath, includeAdd, hlabel, linegroup1))
+                local toolbarGroup, finalizeToolbar = GetBlockToolbar(version, keyPath, treepath, includeAdd, hlabel, linegroup1)
+                finalizeToolbar()
+                block:AddChild(toolbarGroup)
                 block:AddChild(linegroup1)
                 pcontainer:AddChild(block)
             elseif action.Type == Statics.Actions.Action or action.Type == Statics.Actions.Repeat then
@@ -1168,7 +1216,8 @@ function GSE.CreateEditor()
                 macroPanel:SetFullWidth(true)
                 macroPanel:SetAutoAdjustHeight(true)
 
-                local linegroup1 = GetBlockToolbar(version, keyPath, treepath, includeAdd, hlabel, macroPanel)
+                local linegroup1, finalizeToolbar = GetBlockToolbar(version, keyPath, treepath, includeAdd, hlabel, macroPanel)
+                finalizeToolbar()
 
                 macroPanel:AddChild(linegroup1)
 
@@ -1361,7 +1410,7 @@ function GSE.CreateEditor()
                 local layout3 = AceGUI:Create("InlineGroup")
                 layout3:SetFullWidth(true)
                 layout3:SetLayout("List")
-                local linegroup1 = GetBlockToolbar(version, keyPath, treepath, includeAdd, hlabel, layout3)
+                local linegroup1, finalizeToolbar = GetBlockToolbar(version, keyPath, treepath, includeAdd, hlabel, layout3)
 
                 local stepdropdown = AceGUI:Create("Dropdown")
                 stepdropdown:SetLabel(L["Step Function"])
@@ -1441,6 +1490,7 @@ function GSE.CreateEditor()
                 spacerlabel2:SetWidth(5)
                 linegroup1:AddChild(spacerlabel2)
                 linegroup1:AddChild(looplimit)
+                finalizeToolbar()
 
                 layout3:AddChild(linegroup1)
                 local macroGroup = AceGUI:Create("SimpleGroup")
@@ -1467,7 +1517,8 @@ function GSE.CreateEditor()
                         macroPanel.frame:SetBackdrop(nil)
                     end
                 )
-                local linegroup1 = GetBlockToolbar(version, keyPath, treepath, false, hlabel, macroPanel)
+                local linegroup1, finalizeToolbar = GetBlockToolbar(version, keyPath, treepath, false, hlabel, macroPanel)
+                finalizeToolbar()
 
                 local booleanEditBox = AceGUI:Create("EditBox")
                 booleanEditBox:SetLabel(L["Variable"])
@@ -1562,7 +1613,8 @@ function GSE.CreateEditor()
                 trueContainer:SetLayout("Flow")
                 trueContainer:SetFullWidth(true)
 
-                local toolbar = GetBlockToolbar(version, trueKeyPath, treepath, true, tlabel, trueContainer, true, true, true)
+                local toolbar, finalizeToolbar1 = GetBlockToolbar(version, trueKeyPath, treepath, true, tlabel, trueContainer, true, true, true)
+                finalizeToolbar1()
                 trueGroup:AddChild(toolbar)
 
                 for key, act in ipairs(action[1]) do
@@ -1592,7 +1644,8 @@ function GSE.CreateEditor()
                 falsecontainer:SetFullWidth(true)
                 falsecontainer:SetLayout("Flow")
 
-                local toolbar2 = GetBlockToolbar(version, falseKeyPath, treepath, true, flabel, falsecontainer, true, true, true)
+                local toolbar2, finalizeToolbar2 = GetBlockToolbar(version, falseKeyPath, treepath, true, flabel, falsecontainer, true, true, true)
+                finalizeToolbar2()
                 falsegroup:AddChild(toolbar2)
 
                 for key, act in ipairs(action[2]) do
@@ -1614,7 +1667,8 @@ function GSE.CreateEditor()
                         macroPanel.frame:SetBackdrop(nil)
                     end
                 )
-                local linegroup1 = GetBlockToolbar(version, keyPath, treepath, includeAdd, hlabel, macroPanel)
+                local linegroup1, finalizeToolbar = GetBlockToolbar(version, keyPath, treepath, includeAdd, hlabel, macroPanel)
+                finalizeToolbar()
                 macroPanel:AddChild(linegroup1)
                 local SequenceDropDown = AceGUI:Create("Dropdown")
                 SequenceDropDown:SetFullWidth(true)
@@ -1707,7 +1761,6 @@ function GSE.CreateEditor()
             editframe.Sequence = {
                 ["MetaData"] = {
                     ["Author"] = GSE.GetCharacterName(),
-                    ["Talents"] = {},
                     ["Default"] = 1,
                     ["SpecID"] = GSE.GetCurrentSpecID(),
                     ["GSEVersion"] = GSE.VersionString
@@ -1985,9 +2038,9 @@ function GSE.CreateEditor()
         local addIfButton = AceGUI:Create("Icon")
         local addEmbedButton = AceGUI:Create("Icon")
 
-        addActionButton:SetImageSize(20, 20)
-        addActionButton:SetWidth(20)
-        addActionButton:SetHeight(20)
+        addActionButton:SetImageSize(30, 30)
+        addActionButton:SetWidth(30)
+        addActionButton:SetHeight(30)
         addActionButton:SetImage(Statics.ActionsIcons.Action)
 
         addActionButton:SetCallback(
@@ -2016,9 +2069,9 @@ function GSE.CreateEditor()
             end
         )
 
-        addLoopButton:SetImageSize(20, 20)
-        addLoopButton:SetWidth(20)
-        addLoopButton:SetHeight(20)
+        addLoopButton:SetImageSize(30, 30)
+        addLoopButton:SetWidth(30)
+        addLoopButton:SetHeight(30)
         addLoopButton:SetImage(Statics.ActionsIcons.Loop)
 
         addLoopButton:SetCallback(
@@ -2056,9 +2109,9 @@ function GSE.CreateEditor()
             end
         )
 
-        addPauseButton:SetImageSize(20, 20)
-        addPauseButton:SetWidth(20)
-        addPauseButton:SetHeight(20)
+        addPauseButton:SetImageSize(30, 30)
+        addPauseButton:SetWidth(30)
+        addPauseButton:SetHeight(30)
         addPauseButton:SetImage(Statics.ActionsIcons.Pause)
 
         addPauseButton:SetCallback(
@@ -2086,9 +2139,9 @@ function GSE.CreateEditor()
             end
         )
 
-        addIfButton:SetImageSize(20, 20)
-        addIfButton:SetWidth(20)
-        addIfButton:SetHeight(20)
+        addIfButton:SetImageSize(30, 30)
+        addIfButton:SetWidth(30)
+        addIfButton:SetHeight(30)
         addIfButton:SetImage(Statics.ActionsIcons.If)
 
         addIfButton:SetCallback(
@@ -2143,9 +2196,9 @@ function GSE.CreateEditor()
             end
         )
 
-        addEmbedButton:SetImageSize(20, 20)
-        addEmbedButton:SetWidth(20)
-        addEmbedButton:SetHeight(20)
+        addEmbedButton:SetImageSize(30, 30)
+        addEmbedButton:SetWidth(30)
+        addEmbedButton:SetHeight(30)
         addEmbedButton:SetImage(Statics.ActionsIcons.Embed)
 
         addEmbedButton:SetCallback(
@@ -2522,7 +2575,6 @@ function GSE.GUICreateNewSequence(editor, name, recordedstring)
     local sequence = {
         ["MetaData"] = {
             ["Author"]     = GSE.GetCharacterName(),
-            ["Talents"]    = GSE.GetCurrentTalents(),
             ["Default"]    = 1,
             ["SpecID"]     = GSE.GetCurrentSpecID(),
             ["GSEVersion"] = GSE.VersionString,

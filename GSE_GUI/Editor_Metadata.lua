@@ -21,142 +21,6 @@ local contextVersionConfigs = {
     {key="Scenario",    label=L["Scenario"],    tip=L["The version of this macro to use in Scenarios."],                                                                                                        grp=6, spacer=false},
 }
 
-local function DrawTalentsEditor(editframe, container)
-    local function drawTalent(container, name, talent)
-        local row = AceGUI:Create("SimpleGroup")
-
-        local origname = name
-        if GSE.isEmpty(name) then
-            name = "New Loadout"
-        end
-        if GSE.isEmpty(talent) then
-            talent = {
-                ["TalentSet"] = "",
-                ["Description"] = ""
-            }
-        end
-
-        row:SetLayout("Flow")
-        row:SetFullWidth(true)
-
-        local txtname = AceGUI:Create("EditBox")
-        txtname:SetLabel("")
-        txtname:SetRelativeWidth(0.1)
-        txtname:SetText(name)
-        txtname:SetCallback(
-            "OnTextChanged",
-            function(sel, object, value)
-                name = value
-                editframe.Sequence.MetaData.Talents[name] = talent
-                if editframe.Sequence.MetaData.Talents[origname] then
-                    editframe.Sequence.MetaData.Talents[origname] = nil
-                end
-                origname = name
-            end
-        )
-        txtname:DisableButton(true)
-        row:AddChild(txtname)
-
-        local txtloadout = AceGUI:Create("MultiLineEditBox")
-        txtloadout:SetLabel("")
-        txtloadout:SetRelativeWidth(0.43)
-        txtloadout:SetText(talent.TalentSet)
-        txtloadout:SetNumLines(3)
-        txtloadout:SetCallback(
-            "OnTextChanged",
-            function(sel, object, value)
-                talent.TalentSet = value
-                editframe.Sequence.MetaData.Talents[name] = talent
-            end
-        )
-        txtloadout:DisableButton(true)
-        row:AddChild(txtloadout)
-
-        local txtdescription = AceGUI:Create("MultiLineEditBox")
-        txtdescription:SetLabel("")
-        txtdescription:SetRelativeWidth(0.43)
-        txtdescription:SetNumLines(3)
-        txtdescription:SetText(talent.Description)
-        txtdescription:SetCallback(
-            "OnTextChanged",
-            function(sel, object, value)
-                talent.Description = value
-                editframe.Sequence.MetaData.Talents[name] = talent
-            end
-        )
-        txtdescription:DisableButton(true)
-        row:AddChild(txtdescription)
-
-        local delete = AceGUI:Create("InteractiveLabel")
-
-        delete:SetImageSize(25, 25)
-        delete:SetRelativeWidth(0.04)
-        delete:SetImage(Statics.ActionsIcons.Delete)
-        delete:SetCallback(
-            "OnClick",
-            function()
-                editframe.Sequence.MetaData.Talents[name] = nil
-                row:Release()
-                container:DoLayout()
-            end
-        )
-        row:AddChild(delete)
-        container:AddChild(row)
-    end
-    local talents = editframe.Sequence.MetaData.Talents
-    if type(talents) == "string" then
-        talents = {
-            ["Legacy"] = {
-                ["TalentSet"] = talents,
-                ["Description"] = "Original Sequence Talent Set"
-            }
-        }
-        editframe.Sequence.MetaData.Talents = talents
-    end
-    if GSE.isEmpty(talents) then
-        talents = {}
-        editframe.Sequence.MetaData.Talents = talents
-    end
-
-    local talentsheader = AceGUI:Create("Heading")
-    talentsheader:SetText(L["Talents"])
-    talentsheader:SetFullWidth(true)
-    container:AddChild(talentsheader)
-    local addtalent = AceGUI:Create("Button")
-    addtalent:SetText(L["Add Talent Loadout"])
-    addtalent:SetCallback(
-        "OnClick",
-        function()
-            drawTalent(container)
-        end
-    )
-
-    local header = AceGUI:Create("SimpleGroup")
-    header:SetLayout("Flow")
-    header:SetFullWidth(true)
-    local lblname = AceGUI:Create("Heading")
-
-    lblname:SetText(L["Name"])
-    lblname:SetRelativeWidth(0.1)
-    header:AddChild(lblname)
-
-    local lbltalentset = AceGUI:Create("Heading")
-    lbltalentset:SetText(L["Talent Loadout"])
-    lbltalentset:SetRelativeWidth(0.4)
-    header:AddChild(lbltalentset)
-
-    local lblDescription = AceGUI:Create("Heading")
-    lblDescription:SetText(L["Help Information"])
-    lblDescription:SetRelativeWidth(0.4)
-    header:AddChild(lblDescription)
-    container:AddChild(header)
-
-    for k, v in pairs(talents) do
-        drawTalent(container, k, v)
-    end
-    container:AddChild(addtalent)
-end
-
 local function GUIDrawMetadataEditor(editframe, container)
     -- Default frame size = 700 w x 500 h
 
@@ -457,13 +321,87 @@ local function GUIDrawMetadataEditor(editframe, container)
     container:AddChild(defgroups[5])
     container:AddChild(defgroups[6])
 
-    DrawTalentsEditor(editframe, container)
+    -- Dependencies section
+    local deps = editframe.Sequence.MetaData and editframe.Sequence.MetaData.Dependencies
+    local hasDeps = deps and
+        ((type(deps.Variables) == "table" and #deps.Variables > 0) or
+         (type(deps.Sequences) == "table" and #deps.Sequences > 0) or
+         (type(deps.Macros)    == "table" and #deps.Macros    > 0))
+    local usedBy = GSE.GetSequenceDependents(editframe.SequenceName)
+    if hasDeps or #usedBy > 0 then
+        local depHeading = AceGUI:Create("Heading")
+        depHeading:SetText(L["Dependencies"])
+        depHeading:SetFullWidth(true)
+        container:AddChild(depHeading)
+    end
+
+    if hasDeps then
+        local depGroup = AceGUI:Create("SimpleGroup")
+        depGroup:SetLayout("Flow")
+        depGroup:SetFullWidth(true)
+
+        if deps.Variables and #deps.Variables > 0 then
+            local varLabel = AceGUI:Create("Label")
+            varLabel:SetRelativeWidth(0.5)
+            local lines = {L["Requires Variables:"]}
+            for _, vname in ipairs(deps.Variables) do
+                local exists = not GSE.isEmpty(GSEVariables) and not GSE.isEmpty(GSEVariables[vname])
+                lines[#lines + 1] = (exists and "  " or "  |cFFFF0000") .. vname .. (exists and "" or " (!)|r")
+            end
+            varLabel:SetText(table.concat(lines, "\n"))
+            depGroup:AddChild(varLabel)
+        end
+
+        if deps.Sequences and #deps.Sequences > 0 then
+            local seqLabel = AceGUI:Create("Label")
+            seqLabel:SetRelativeWidth(0.5)
+            local lines = {L["Embeds Sequences:"]}
+            for _, sname in ipairs(deps.Sequences) do
+                local exists = false
+                for chkclass = 0, 13 do
+                    if GSESequences[chkclass] and not GSE.isEmpty(GSESequences[chkclass][sname]) then
+                        exists = true
+                        break
+                    end
+                end
+                lines[#lines + 1] = (exists and "  " or "  |cFFFF0000") .. sname .. (exists and "" or " (!)|r")
+            end
+            seqLabel:SetText(table.concat(lines, "\n"))
+            depGroup:AddChild(seqLabel)
+        end
+
+        if deps.Macros and #deps.Macros > 0 then
+            local macLabel = AceGUI:Create("Label")
+            macLabel:SetRelativeWidth(0.5)
+            local lines = {L["Requires Macros:"]}
+            for _, mname in ipairs(deps.Macros) do
+                local slot = GetMacroIndexByName and GetMacroIndexByName(mname)
+                local onChar = slot and slot > 0
+                local inStore = not GSE.isEmpty(GSEMacros) and not GSE.isEmpty(GSEMacros[mname])
+                local colour = onChar and "  " or (inStore and "  |cFFFFFF00" or "  |cFFFF0000")
+                local suffix = onChar and "" or (inStore and " (stored)|r" or " (!)|r")
+                lines[#lines + 1] = colour .. mname .. suffix
+            end
+            macLabel:SetText(table.concat(lines, "\n"))
+            depGroup:AddChild(macLabel)
+        end
+
+        container:AddChild(depGroup)
+    end
+
+    if #usedBy > 0 then
+        local usedByLabel = AceGUI:Create("Label")
+        usedByLabel:SetFullWidth(true)
+        local lines = {L["Embedded by:"]}
+        for _, entry in ipairs(usedBy) do
+            lines[#lines + 1] = "  " .. entry.name .. " (" .. L["Class"] .. " " .. entry.classid .. ")"
+        end
+        usedByLabel:SetText(table.concat(lines, "\n"))
+        container:AddChild(usedByLabel)
+    end
 end
 
 function GSE.GUI.SetupMetadata(editframe)
-    editframe.DrawTalentsEditor = function(container)
-        DrawTalentsEditor(editframe, container)
-    end
     editframe.GUIDrawMetadataEditor = function(container)
         GUIDrawMetadataEditor(editframe, container)
     end

@@ -180,7 +180,8 @@ local function onClick_KEYBINDINGS(editframe, container, group, unique)
             end
         else
             if unique[2] == "AO" and bind then
-                button = GSE_C["ActionBarBinds"]["Specialisations"][specialization][bind]
+                local aoSpecs = GSE_C["ActionBarBinds"]["Specialisations"]
+                button = aoSpecs and aoSpecs[specialization] and aoSpecs[specialization][bind]
             else
                 button = unique[5]
             end
@@ -190,7 +191,8 @@ local function onClick_KEYBINDINGS(editframe, container, group, unique)
         bind = unique[3]
         button = unique[4]
         if kbtype == "AO" and bind then
-            button = GSE_C["ActionBarBinds"]["Specialisations"][specialization][bind]
+            local aoSpecs = GSE_C["ActionBarBinds"]["Specialisations"]
+            button = aoSpecs and aoSpecs[specialization] and aoSpecs[specialization][bind]
         end
     end
 
@@ -496,6 +498,7 @@ local function ManageTree(editframe)
             node.icon = GSE.GetClassIcon(tclassid)
         end
 
+        GSE.EnsureSequenceLoaded(tclassid, elements[3])
         for i, j in ipairs(GSE.Library[tclassid][elements[3]]["Macros"]) do
             table.insert(node.children, {
                 value = i,

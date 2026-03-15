@@ -516,5 +516,9 @@ globals = {
     "strtrim",
     "C_EventUtils",
     "Dominos",
-    "GameTooltip_SetTitle"
+    "GameTooltip_SetTitle",
+    "ActionButton_Update",
+    "CreateSettingsButtonInitializer",
+    "ActionButton_SetTooltip",
+    "BFButton"
 }

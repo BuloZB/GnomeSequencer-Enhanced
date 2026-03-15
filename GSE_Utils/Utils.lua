@@ -141,17 +141,20 @@ function GSE.OOCPerformMergeAction(action, classid, sequenceName, newSequence)
         end
         GSE.PrintDebugMessage("Finished colliding entry entry", "Storage")
         GSE.Print(string.format(L["Extra Macro Versions of %s has been added."], sequenceName), GNOME)
+        GSE.ComputeSequenceDependencies(GSE.Library[classid][sequenceName])
         GSESequences[classid][sequenceName] = GSE.EncodeMessage({sequenceName, GSE.Library[classid][sequenceName]})
     elseif action == "REPLACE" then
         GSE.Library[classid][sequenceName] = {}
         GSE.Library[classid][sequenceName] = newSequence
         GSE.PrintDebugMessage("About to encode: Sequence " .. sequenceName)
         GSE.PrintDebugMessage(" New Entry: " .. GSE.Dump(GSE.Library[classid][sequenceName]), "Storage")
+        GSE.ComputeSequenceDependencies(GSE.Library[classid][sequenceName])
         GSESequences[classid][sequenceName] = GSE.EncodeMessage({sequenceName, GSE.Library[classid][sequenceName]})
         GSE.Print(sequenceName .. L[" was updated to new version."], "Storage")
     elseif action == "RENAME" then
         GSE.Library[classid][sequenceName] = {}
         GSE.Library[classid][sequenceName] = newSequence
+        GSE.ComputeSequenceDependencies(GSE.Library[classid][sequenceName])
         GSESequences[classid][sequenceName] = GSE.EncodeMessage({sequenceName, GSE.Library[classid][sequenceName]})
         GSE.Print(sequenceName .. L[" was imported as a new macro."], "Storage")
         GSE.PrintDebugMessage(
@@ -635,6 +638,207 @@ local function checkSeqStructure(classlibid, seqname, seq) -- luacheck: ignore c
     return issues
 end
 
+-- ---------------------------------------------------------------------------
+-- Dependency tracking
+-- ---------------------------------------------------------------------------
+
+--- Scan a string for GSE variable references, accumulating names into `found`.
+local function scanStringForVarRefs(str, found)
+    -- Bracket notation: GSE.V["name"]() or GSE.V['name']()
+    for name in str:gmatch('GSE%.V%[["\'](.-)["\']%]') do
+        found[name] = true
+    end
+    -- Dot notation: GSE.V.name()
+    for name in str:gmatch('GSE%.V%.([%w_]+)%s*%(%)') do
+        found[name] = true
+    end
+end
+
+--- Scan a string for WoW macro API references, accumulating macro names into `found`.
+-- Matches GetMacroBody("name"), GetMacroIndexByName("name"), GetMacroSpell("name"),
+-- GetMacroItem("name"), and any other GetMacro*(name) Lua API call.
+local function scanStringForMacroRefs(str, found)
+    for name in str:gmatch('GetMacro%a*%s*%(%s*["\']([^"\']+)["\']') do
+        found[name] = true
+    end
+end
+
+--- Recursively walk a table collecting variable refs, Embed sequence names, and macro refs.
+local function walkTableForDeps(t, vars, seqs, macros)
+    for _, v in pairs(t) do
+        if type(v) == "string" then
+            scanStringForVarRefs(v, vars)
+            scanStringForMacroRefs(v, macros)
+        elseif type(v) == "table" then
+            -- Use rawget to avoid triggering Statics.TableMetadataFunction __index,
+            -- which expects array path keys and errors on plain string keys.
+            local vType     = rawget(v, "Type")
+            local vtype     = rawget(v, "type")
+            local vSequence = rawget(v, "Sequence")
+            local vmacro    = rawget(v, "macro")
+            if vType == "Embed" and type(vSequence) == "string" then
+                seqs[vSequence] = true
+            end
+            -- Action block with type="macro": if the macro field does not start with
+            -- "/" or "#" it is a plain WoW macro name reference, not command text.
+            if vType == "Action" and vtype == "macro" and type(vmacro) == "string" then
+                local text = GSE.UnEscapeString(vmacro)
+                local first = string.sub(text, 1, 1)
+                if #text > 0 and first ~= "/" and first ~= "#" then
+                    macros[text] = true
+                end
+            end
+            walkTableForDeps(v, vars, seqs, macros)
+        end
+    end
+end
+
+--- Compute the direct dependencies of a sequence by scanning its Macros.
+-- Mutates sequence.MetaData.Dependencies in place and returns it.
+-- {Variables = {"v1",...}, Sequences = {"s1",...}, Macros = {"m1",...}}  (sorted arrays)
+function GSE.ComputeSequenceDependencies(sequence)
+    if type(sequence) ~= "table" or type(sequence.MetaData) ~= "table" then return end
+    local vars, seqs, macros = {}, {}, {}
+    if type(sequence.Macros) == "table" then
+        walkTableForDeps(sequence.Macros, vars, seqs, macros)
+    end
+    local varList, seqList, macroList = {}, {}, {}
+    for k in pairs(vars) do table.insert(varList, k) end
+    for k in pairs(seqs) do table.insert(seqList, k) end
+    for k in pairs(macros) do table.insert(macroList, k) end
+    table.sort(varList)
+    table.sort(seqList)
+    table.sort(macroList)
+    local deps = {Variables = varList, Sequences = seqList, Macros = macroList}
+    sequence.MetaData.Dependencies = deps
+    return deps
+end
+
+--- Compute the direct variable dependencies of a variable's funct string.
+-- Mutates variable.Dependencies in place and returns it.
+function GSE.ComputeVariableDependencies(variable)
+    if type(variable) ~= "table" then return end
+    local vars = {}
+    if type(variable.funct) == "string" then
+        scanStringForVarRefs(variable.funct, vars)
+    end
+    local varList = {}
+    for k in pairs(vars) do table.insert(varList, k) end
+    table.sort(varList)
+    local deps = {Variables = varList}
+    variable.Dependencies = deps
+    return deps
+end
+
+--- Resolve the full transitive closure of variable names.
+-- varNames: array (or set) of starting variable names.
+-- Returns a set table {name = true} of all required variable names.
+function GSE.GetTransitiveVariableDeps(varNames)
+    local result = {}
+    local queue = {}
+    -- Accept both array and set as input
+    if type(varNames) == "table" then
+        for k, v in pairs(varNames) do
+            local name = (type(k) == "string" and v == true) and k or v
+            if type(name) == "string" and not result[name] then
+                result[name] = true
+                table.insert(queue, name)
+            end
+        end
+    end
+    local i = 1
+    while i <= #queue do
+        local name = queue[i]
+        i = i + 1
+        if not GSE.isEmpty(GSEVariables) and not GSE.isEmpty(GSEVariables[name]) then
+            local ok, decoded = GSE.DecodeMessage(GSEVariables[name])
+            if ok and decoded and decoded.Dependencies and decoded.Dependencies.Variables then
+                for _, depname in ipairs(decoded.Dependencies.Variables) do
+                    if not result[depname] then
+                        result[depname] = true
+                        table.insert(queue, depname)
+                    end
+                end
+            end
+        end
+    end
+    return result
+end
+
+--- Find all loaded sequences and variables that directly depend on a variable.
+-- Only searches classes already in GSE.Library (lazy-loaded classes not forced).
+-- Returns { sequences = {{classid=n, name=s}, ...}, variables = {name, ...} }
+function GSE.GetVariableDependents(varName)
+    local seqs, vars = {}, {}
+    for classid = 0, 13 do
+        if GSE.Library[classid] then
+            for seqname, seq in pairs(GSE.Library[classid]) do
+                if type(seq) == "table" and type(seq.MetaData) == "table" then
+                    local deps = seq.MetaData.Dependencies
+                    if deps and type(deps.Variables) == "table" then
+                        for _, vname in ipairs(deps.Variables) do
+                            if vname == varName then
+                                table.insert(seqs, {classid = classid, name = seqname})
+                                break
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    if not GSE.isEmpty(GSEVariables) then
+        for vname, vdata in pairs(GSEVariables) do
+            if vname ~= varName then
+                local ok, decoded = GSE.DecodeMessage(vdata)
+                if ok and decoded and decoded.Dependencies and type(decoded.Dependencies.Variables) == "table" then
+                    for _, depname in ipairs(decoded.Dependencies.Variables) do
+                        if depname == varName then
+                            table.insert(vars, vname)
+                            break
+                        end
+                    end
+                end
+            end
+        end
+    end
+    table.sort(vars)
+    table.sort(seqs, function(a, b)
+        if a.classid ~= b.classid then return a.classid < b.classid end
+        return a.name < b.name
+    end)
+    return {sequences = seqs, variables = vars}
+end
+
+--- Find all loaded sequences that embed the given sequence name.
+-- Only searches classes already in GSE.Library (lazy-loaded classes not forced).
+-- Returns array of {classid=n, name=s}.
+function GSE.GetSequenceDependents(seqName)
+    local result = {}
+    for classid = 0, 13 do
+        if GSE.Library[classid] then
+            for name, seq in pairs(GSE.Library[classid]) do
+                if type(seq) == "table" and type(seq.MetaData) == "table" then
+                    local deps = seq.MetaData.Dependencies
+                    if deps and type(deps.Sequences) == "table" then
+                        for _, sname in ipairs(deps.Sequences) do
+                            if sname == seqName then
+                                table.insert(result, {classid = classid, name = name})
+                                break
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    table.sort(result, function(a, b)
+        if a.classid ~= b.classid then return a.classid < b.classid end
+        return a.name < b.name
+    end)
+    return result
+end
+
 --- Scans all sequences in GSE.Library for structural and content issues,
 -- then checks GSESequences entries for valid encoding.
 function GSE.ScanMacrosForErrors()
@@ -643,6 +847,7 @@ function GSE.ScanMacrosForErrors()
 
     -- 1. Structural / content checks on GSE.Library (all class IDs, including 0 = global)
     for classlibid = 0, 13 do
+        GSE.EnsureClassLoaded(classlibid)
         local classlib = GSE.Library[classlibid]
         if classlib and type(classlib) == "table" then
             for seqname, seq in pairs(classlib) do
@@ -722,7 +927,100 @@ function GSE.ScanMacrosForErrors()
         end
     end
 
-    -- 3. GSESequences encoding check (existing behaviour: remove malformed entries)
+    -- 3. Dependency checks: missing variables and sequences
+    for classlibid = 0, 13 do
+        local classlib = GSE.Library[classlibid]
+        if classlib and type(classlib) == "table" then
+            for seqname, seq in pairs(classlib) do
+                if type(seq) == "table" and type(seq.MetaData) == "table" then
+                    local deps = seq.MetaData.Dependencies
+                    if deps then
+                        -- Check variable dependencies
+                        if type(deps.Variables) == "table" then
+                            for _, vname in ipairs(deps.Variables) do
+                                if GSE.isEmpty(GSEVariables) or GSE.isEmpty(GSEVariables[vname]) then
+                                    totalIssues = totalIssues + 1
+                                    GSE.Print(
+                                        string.format(
+                                            L["Sequence '%s' (class %d) depends on variable '%s' which does not exist."],
+                                            seqname, classlibid, vname
+                                        ),
+                                        "Error"
+                                    )
+                                end
+                            end
+                        end
+                        -- Check embedded sequence dependencies
+                        if type(deps.Sequences) == "table" then
+                            for _, depseq in ipairs(deps.Sequences) do
+                                local found = false
+                                for chkclass = 0, 13 do
+                                    if GSE.Library[chkclass] and not GSE.isEmpty(GSE.Library[chkclass][depseq]) then
+                                        found = true
+                                        break
+                                    end
+                                    if GSESequences[chkclass] and not GSE.isEmpty(GSESequences[chkclass][depseq]) then
+                                        found = true
+                                        break
+                                    end
+                                end
+                                if not found then
+                                    totalIssues = totalIssues + 1
+                                    GSE.Print(
+                                        string.format(
+                                            L["Sequence '%s' (class %d) embeds sequence '%s' which does not exist."],
+                                            seqname, classlibid, depseq
+                                        ),
+                                        "Error"
+                                    )
+                                end
+                            end
+                        end
+                        -- Check WoW macro dependencies (only if WoW API is available)
+                        if type(deps.Macros) == "table" and GetMacroIndexByName then
+                            for _, macname in ipairs(deps.Macros) do
+                                local slot = GetMacroIndexByName(macname)
+                                local inStore = not GSE.isEmpty(GSEMacros) and not GSE.isEmpty(GSEMacros[macname])
+                                if (not slot or slot == 0) and not inStore then
+                                    totalIssues = totalIssues + 1
+                                    GSE.Print(
+                                        string.format(
+                                            L["Sequence '%s' (class %d) depends on macro '%s' which does not exist."],
+                                            seqname, classlibid, macname
+                                        ),
+                                        "Error"
+                                    )
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    -- 4. Variable dependency checks
+    if not GSE.isEmpty(GSEVariables) then
+        for vname, vdata in pairs(GSEVariables) do
+            local ok, decoded = GSE.DecodeMessage(vdata)
+            if ok and decoded and decoded.Dependencies and type(decoded.Dependencies.Variables) == "table" then
+                for _, depname in ipairs(decoded.Dependencies.Variables) do
+                    if GSE.isEmpty(GSEVariables[depname]) then
+                        totalIssues = totalIssues + 1
+                        GSE.Print(
+                            string.format(
+                                L["Variable '%s' depends on variable '%s' which does not exist."],
+                                vname, depname
+                            ),
+                            "Error"
+                        )
+                    end
+                end
+            end
+        end
+    end
+
+    -- 5. GSESequences encoding check (existing behaviour: remove malformed entries)
     if type(GSESequences) == "table" then
         for classlibid, classlib in ipairs(GSESequences) do
             if type(classlib) == "table" then
@@ -752,6 +1050,7 @@ end
 -- Usage: /run GSE.FixSequenceStructure(classLibraryID, "SequenceName")
 function GSE.FixSequenceStructure(classlibid, seqname)
     classlibid = tonumber(classlibid)
+    GSE.EnsureSequenceLoaded(classlibid, seqname)
     if not classlibid or not GSE.Library[classlibid] then
         GSE.Print(string.format(L["Invalid class library ID: %s"], tostring(classlibid)))
         return
@@ -1188,18 +1487,23 @@ colorTable[0] = "|r"
 
 Statics.IndentationColorTable = colorTable
 
-if GSE.GameMode > 10 then
-    -- Shared handler: right-click on an empty action button shows the GSE sequence picker.
-    -- Fires for standard Blizzard bars immediately, and for third-party bars after they load.
+do
+    -- Shared handler: right-click on a GSE-overridden button shows change/clear options;
+    -- right-click on an empty action button shows the sequence picker to assign one.
     local function gseEmptyButtonHandler(self, mousebutton, down)
         if not GSEOptions.actionBarOverridePopup then return end
         if InCombatLockdown() then return end
         if not down then return end
         if mousebutton ~= "RightButton" then return end
-        if self:GetAttribute("gse-button") then return end
-        local action = self.action or self:GetAttribute("action")
-        if not action or action == 0 then return end
-        if HasAction(action) then return end
+
+        local existingSequence = self:GetAttribute("gse-button")
+
+        if not existingSequence then
+            -- Only show the picker on genuinely empty slots.
+            local action = self.action or self:GetAttribute("action")
+            if not action or action == 0 then return end
+            if HasAction(action) then return end
+        end
 
         local classIconText = ""
         local classInfo = C_CreatureInfo and C_CreatureInfo.GetClassInfo(GSE.GetCurrentClassID())
@@ -1218,12 +1522,22 @@ if GSE.GameMode > 10 then
         addSequences(GSE.GetCurrentClassID())
         addSequences(0)
 
-        if #names == 0 then return end
         table.sort(names, function(a, b) return a.name < b.name end)
 
         local buttonName = self:GetName()
         MenuUtil.CreateContextMenu(self, function(ownerRegion, rootDescription)
-            rootDescription:CreateTitle(L["Assign GSE Sequence"])
+            if existingSequence then
+                rootDescription:CreateTitle(L["GSE"] .. ": " .. existingSequence)
+                rootDescription:CreateButton(L["Clear Override"], function()
+                    GSE.RemoveActionBarOverride(buttonName)
+                end)
+                if #names > 0 then
+                    rootDescription:CreateDivider()
+                    rootDescription:CreateTitle(L["Change Sequence"])
+                end
+            else
+                rootDescription:CreateTitle(L["Assign GSE Sequence"])
+            end
             for _, entry in ipairs(names) do
                 local iconText = classIconText
                 local specID = entry.specID
@@ -1273,6 +1587,7 @@ if GSE.GameMode > 10 then
     -- Third-party action bar addons use their own OnClick handlers, so we install
     -- HookScript directly on each button after PLAYER_ENTERING_WORLD, by which
     -- point all addon frames are guaranteed to exist.
+    if not CreateFrame then return end
     local gseBarHookFrame = CreateFrame("Frame")
     gseBarHookFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
     gseBarHookFrame:SetScript("OnEvent", function(self)
