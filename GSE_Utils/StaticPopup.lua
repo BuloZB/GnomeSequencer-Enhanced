@@ -2,6 +2,59 @@ local GSE = GSE
 local L = GSE.L
 local Statics = GSE.Static
 
+--- Shown when importing a sequence whose checksum is absent or does not match.
+-- button1 (Proceed) completes the import; button2 (Cancel) aborts it.
+StaticPopupDialogs["GSE_SEQUENCE_INTEGRITY_WARNING"] = {
+    text = L["GSE_SEQUENCE_INTEGRITY_WARNING_TEXT"],
+    button1 = L["Proceed"],
+    button2 = CANCEL,
+    OnAccept = function(self, data)
+        if data.forcereplace then
+            GSE.PerformMergeAction("REPLACE", GSE.GetClassIDforSpec(data.sequence.MetaData.SpecID), data.seqName, data.sequence)
+        else
+            GSE.AddSequenceToCollection(data.seqName, data.sequence)
+        end
+        GSE:SendMessage(Statics.Messages.SEQUENCE_UPDATED, data.seqName)
+    end,
+    timeout = 0,
+    whileDead = true,
+    hideOnEscape = true,
+    showAlert = true,
+    preferredIndex = 3,
+}
+
+--- Shown when importing a sequence created with an older version of GSE.
+-- button1 (Proceed) completes the import (chaining to the checksum dialog if
+-- the sequence version is >= Statics.ChecksumMinVersion); button2 (Cancel) aborts.
+StaticPopupDialogs["GSE_SEQUENCE_OLDER_VERSION"] = {
+    text = L["GSE_SEQUENCE_OLDER_VERSION_TEXT"],
+    button1 = L["Proceed"],
+    button2 = CANCEL,
+    OnAccept = function(self, data)
+        -- Sequences from ChecksumMinVersion onwards may have a checksum; verify it.
+        if data.sequence.MetaData.GSEVersion >= Statics.ChecksumMinVersion
+                and GSE.VerifySequenceChecksum then
+            local integrity = GSE.VerifySequenceChecksum(data.sequence)
+            if integrity ~= true then
+                StaticPopup_Show("GSE_SEQUENCE_INTEGRITY_WARNING", data.seqName, nil,
+                    {seqName = data.seqName, sequence = data.sequence, forcereplace = data.forcereplace})
+                return
+            end
+        end
+        if data.forcereplace then
+            GSE.PerformMergeAction("REPLACE", GSE.GetClassIDforSpec(data.sequence.MetaData.SpecID), data.seqName, data.sequence)
+        else
+            GSE.AddSequenceToCollection(data.seqName, data.sequence)
+        end
+        GSE:SendMessage(Statics.Messages.SEQUENCE_UPDATED, data.seqName)
+    end,
+    timeout = 0,
+    whileDead = true,
+    hideOnEscape = true,
+    showAlert = true,
+    preferredIndex = 3,
+}
+
 StaticPopupDialogs["GS-DebugOutput"] = {
     text = "Dump of GS Debug messages",
     button1 = L["Update"],
@@ -199,6 +252,29 @@ StaticPopupDialogs["GSE-DeleteMacroDialog"] = {
     preferredIndex = STATICPOPUPS_NUMDIALOGS,
     showAlert = true,
     exclusive = true
+}
+
+--- Shown once per corrupt sequence found during load/migration.
+-- button1 = Delete removes the entry from storage.
+-- button2 = Skip leaves it in place; the player can run /gse checksequencesforerrors later.
+-- OnCancel also fires when the player presses Escape (hideOnEscape = true), so the
+-- chain advances rather than silently stopping.
+StaticPopupDialogs["GSE_CORRUPT_SEQUENCE"] = {
+    text = "",  -- set dynamically before StaticPopup_Show
+    button1 = L["Delete"],
+    button2 = L["Skip"],
+    OnAccept = function(self, data)
+        GSE.DeleteCorruptSequence(data.classid, data.name)
+        GSE.ProcessNextCorruptSequence()
+    end,
+    OnCancel = function(self, data)
+        GSE.ProcessNextCorruptSequence()
+    end,
+    timeout = 0,
+    whileDead = true,
+    hideOnEscape = true,
+    preferredIndex = 3,
+    showAlert = true,
 }
 
 StaticPopupDialogs["GSE_ChatLink"] = {

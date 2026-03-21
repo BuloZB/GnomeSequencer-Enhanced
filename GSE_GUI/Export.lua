@@ -41,7 +41,7 @@ local function compileExport(exportTable, humanReadable)
         end
 
         local macroString = ""
-        for k, _ in pairs(exportTable.Macros) do
+        for k, _ in pairs(exportTable["Macros"]) do
             macroString = macroString .. "- " .. k .. "\n"
         end
         if string.len(macroString) > 0 then
@@ -59,7 +59,7 @@ local function compileExport(exportTable, humanReadable)
     return exportstring
 end
 
-GSE.GUIAdvancedExport = function(exportframe, objectname, type)
+GSE.GUIAdvancedExport = function(exportframe, objectname, exportCategory)
     exportframe:ReleaseChildren()
     exportframe:SetStatusText(L["Advanced Export"])
     local exportTable = {
@@ -157,7 +157,7 @@ GSE.GUIAdvancedExport = function(exportframe, objectname, type)
                 exportTable["Variables"][key] = nil
                 exportTable.ElementCount = exportTable.ElementCount - 1
             end
-            C_Timer.After(0, function() exportsequencebox:SetText(compileExport(exportTable, humanexportcheckbox:GetValue())) end)
+            exportsequencebox:SetText(compileExport(exportTable, humanexportcheckbox:GetValue()))
         end
     )
     SequenceDropDown:SetCallback(
@@ -169,6 +169,13 @@ GSE.GUIAdvancedExport = function(exportframe, objectname, type)
                     GSE.UnEscapeTable(
                     GSE.TranslateSequence(GSE.CloneSequence(seq), Statics.TranslatorMode.ID)
                 )
+                -- Stamp the checksum on the export clone only.
+                -- The local copy (seq) is intentionally left unchanged so that the
+                -- stored checksum always reflects the last-exported state.
+                local exportedSeq = exportTable["Sequences"][key]
+                if exportedSeq and exportedSeq.MetaData and GSE.ComputeSequenceChecksum then
+                    exportedSeq.MetaData.Checksum = GSE.ComputeSequenceChecksum(exportedSeq)
+                end
                 exportTable.ElementCount = exportTable.ElementCount + 1
 
                 -- Auto-include transitive variable dependencies
@@ -250,7 +257,7 @@ GSE.GUIAdvancedExport = function(exportframe, objectname, type)
                 exportTable["Sequences"][key] = nil
                 exportTable.ElementCount = exportTable.ElementCount - 1
             end
-            C_Timer.After(0, function() exportsequencebox:SetText(compileExport(exportTable, humanexportcheckbox:GetValue())) end)
+            exportsequencebox:SetText(compileExport(exportTable, humanexportcheckbox:GetValue()))
         end
     )
     MacroDropDown:SetCallback(
@@ -291,7 +298,7 @@ GSE.GUIAdvancedExport = function(exportframe, objectname, type)
                 exportTable["Macros"][key] = nil
                 exportTable.ElementCount = exportTable.ElementCount - 1
             end
-            C_Timer.After(0, function() exportsequencebox:SetText(compileExport(exportTable, humanexportcheckbox:GetValue())) end)
+            exportsequencebox:SetText(compileExport(exportTable, humanexportcheckbox:GetValue()))
         end
     )
     humanexportcheckbox:SetCallback(
@@ -303,8 +310,8 @@ GSE.GUIAdvancedExport = function(exportframe, objectname, type)
 end
 
 
-function GSE.GUIExport(category, objectname, type)
+function GSE.GUIExport(category, objectname, exportCategory)
     exportframe.classid = category
-    GSE.GUIAdvancedExport(exportframe, objectname, type)
+    GSE.GUIAdvancedExport(exportframe, objectname, exportCategory)
     exportframe:Show()
 end

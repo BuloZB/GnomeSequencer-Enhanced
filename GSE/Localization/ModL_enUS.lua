@@ -6,6 +6,20 @@ L["GSE Sequence"] = true
 L["Show Actionbar Override Watermark"] = true
 L["Show the GSE logo as a small watermark on actionbar override buttons."] = true
 
+-- Sequence version / compatibility strings
+L["GSE_SEQUENCE_OLDER_VERSION_TEXT"] = "WARNING: The sequence '%s' was created with an older version of GSE (%s).\n\nIt may need adjustments before it works correctly.\n\nDo you want to proceed with the import anyway?"
+
+-- Sequence integrity / checksum strings
+L["Sequence has been altered from its exported state"] = true
+L["Proceed"] = true
+L["GSE_SEQUENCE_INTEGRITY_WARNING_TEXT"] = "WARNING: The sequence '%s' does not have a valid integrity checksum.\n\nThis means the sequence was either not created with GSE, or has been modified since it was last exported.\n\nPlease verify its contents before using it.\n\nDo you want to proceed with the import anyway?"
+
+-- Corrupt-sequence dialog strings
+L["Skip"] = true
+L["GSE_CORRUPT_SEQUENCE_TEXT"] = "The sequence '%s' (class %d) could not be read and may be corrupt.\n\nDelete it to remove the broken data, or Skip to leave it for now.\nYou can reimport the sequence from its original source to recover it."
+L["Corrupt sequence '%s' (class %d) deleted."] = true
+L["%d corrupt sequence(s) found \226\128\148 showing resolution options."] = true
+
 -- checksequencesforerrors / FixSequenceStructure strings
 L["Scanning GSE.Library for structural and content issues..."] = true
 L["Sequence is not a table"] = true
@@ -26,6 +40,7 @@ L["Macros[%d].Actions[%d] (Pause) has neither Clicks nor MS"] = true
 L["Macros[%d].Actions[%d] macro text exceeds 255 characters (%d chars)"] = true
 L["Macros[%d].Actions[%d] macro text has unbalanced brackets (%d '[' vs %d ']')"] = true
 L["Macros[%d].Actions[%d] uses unrecognized slash command: /%s"] = true
+L["Macros[%d].Actions[%d] uses // comments instead of --; GSE will not strip these on compile"] = true
 L["Issues found in '%s' (class library %d):"] = true
 L["To attempt automatic repair run: %s/run GSE.FixSequenceStructure(%d, \"%s\")%s"] = true
 L["Compile error in Macros[%d] of '%s': %s"] = true
@@ -127,38 +142,47 @@ L["Open Colour Settings"] = true
 L["Click to open the colour picker for GSE text and editor colours."] = true
 L["Title Colour"] = true
 L["Picks a Custom Colour for the Mod Names."] = true
-L["Author Colour"] = true
-L["Picks a Custom Colour for the Author."] = true
-
+L["Info Colour"] = true
+L["Picks a Custom Colour for informational and debug output."] = true
+L["Command Colour"] = true
 L["Picks a Custom Colour for the Commands."] = true
 L["Emphasis Colour"] = true
 L["Picks a Custom Colour for emphasis."] = true
 L["Normal Colour"] = true
 L["Picks a Custom Colour to be used normally."] = true
 L["Editor Colours"] = true
-L["Spell Colour"] = true
-L["Picks a Custom Colour to be used for Spells and Abilities."] = true
+L["Spells & Action Labels"] = true
+L["Picks a Custom Colour for spell names and action block type labels."] = true
 L["Unknown Colour"] = true
 L["Picks a Custom Colour to be used for unknown terms."] = true
-L["Icon Colour"] = true
-L["Picks a Custom Colour to be used for Icons."] = true
-L["SpecID/ClassID Colour"] = true
-L["Picks a Custom Colour to be used for numbers."] = true
-
-L["Picks a Custom Colour to be used for strings."] = true
-L["Picks a Custom Colour to be used for macro conditionals eg [mod:shift]"] = true
-L["Help Colour"] = true
-L["Picks a Custom Colour to be used for braces and indents."] = true
-L["Step Functions"] = true
-L["Picks a Custom Colour to be used for StepFunctions."] = true
-L["Language Colour"] = true
-L["Picks a Custom Colour to be used for language descriptors"] = true
-L["Blizzard Functions Colour"] = true
-L["Picks a Custom Colour to be used for Macro Keywords like /cast and /target"] = true
+L["Table Operators"] = true
+L["Picks a Custom Colour for table operators such as { } and ..."] = true
+L["Numbers & Operators"] = true
+L["Picks a Custom Colour for numbers and arithmetic operators."] = true
+L["Bracket Operators"] = true
+L["Picks a Custom Colour for array bracket operators [ ]."] = true
+L["Conditionals & Comments"] = true
+L["Picks a Custom Colour for macro conditionals eg [mod:shift] and comments."] = true
+L["Logic & Comparison"] = true
+L["Picks a Custom Colour for logic and comparison operators such as == and or."] = true
+L["Modifiers & Functions"] = true
+L["Picks a Custom Colour for conditional modifiers and standard functions."] = true
+L["Slash Commands"] = true
+L["Picks a Custom Colour for WoW macro slash commands like /cast and /use."] = true
 L["Plugins"] = true
 
 L["Registered Addons"] = true
 L["No plugins are currently registered."] = true
+L["Reload All"] = true
+L["Restore"] = true
+L["Individual Sequences - %s"] = true
+L["Restore a single sequence from this plugin"] = true
+L["Compatible with this version of GSE"] = true
+L["Not compatible with this version of GSE (sequence version: %s)"] = true
+L["unknown"] = true
+L["Checksum valid"] = true
+L["Checksum invalid - sequence may have been modified"] = true
+L["No checksum"] = true
 L["Default Tree Panel Width"] = true
 L["How many pixels wide should the sequence list panel on the left of the Editor be.  Defaults to 150"] = true
 
@@ -635,6 +659,7 @@ L[
 L["This function will open a window enabling you to edit the spell cache and any mappings between individual spellIDs and spellnames."] = true
 L["Edit Spell Cache"] = true
 L["Edit"] = true
+L["Reload"] = true
 L["Spell Cache Editor"] = true
 L["Spell ID"] = true
 L["Spell Name"] = true
@@ -686,8 +711,6 @@ L["Print Active Modifiers on Click"] = true
 L["Store output of debug messages in a Global Variable that can be referrenced by other mods."] = true
 L["This option dumps extra trace information to your chat window to help troubleshoot problems with the mod"] = true
 L["Enable Mod Debug Mode"] = true
-L["Conditionals Colour"] = true
-L["String Colour"] = true
 L["Command Colour"] = true
 L["GSE has a LibDataBroker (LDB) data feed.  Set this option to show queued Out of Combat events in the tooltip."] =
     true
@@ -779,6 +802,8 @@ L["Button Settings"] = true
 L["Skyriding / Vehicle Keybinds"] = true
 L["Override bindings for Skyriding, Vehicle, Possess and Override Bars"] = true
 L["Skyriding Button"] = true
+L["Unassigned"] = true
+L["Press a key..."] = true
 
 -- #1835
 L["Keybinding Tools"] = true
@@ -830,7 +855,9 @@ L["Prevent the menu from being dragged to a new position."] = true
 L["Right-Click for Options"] = true
 L["Shift + Right-Click to copy version"] = true
 L["Position Locked"] = true
-
+L["Change"] = true
+L["Add an Embed Block.  Embed Blocks allow you to incorporate another sequence into this sequence at the current block."] = true
+L["Are you sure you want to delete %s?  This will delete the macro and all versions.  This action cannot be undone."] = true
 L["WhatsNew"] =
 [[|cFFFFFFFFGS|r|cFF00FFFFE|r 3.3.04
 

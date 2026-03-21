@@ -9,6 +9,22 @@ local VARIABLE_SELFKEY_PREFIX = "GSEVar_"  -- AceEvent self-key prefix for varia
 -- Track which class libraries have been decompressed into GSE.Library.
 GSE.LoadedClasses = GSE.LoadedClasses or {}
 
+-- Sequences that failed to decode during load are collected here so the UI can
+-- offer the player interactive options (delete / skip) rather than silent loss.
+GSE.CorruptSequences = GSE.CorruptSequences or {}
+
+--- One-off migration: rename the old "Macros" array to "Versions" on a sequence table.
+-- Uses bracket notation for the old key so future rename passes cannot corrupt this guard.
+-- Returns true when migration was performed so the caller can re-save to disk.
+local function migrateSequenceVersions(sequence)
+    if type(sequence) ~= "table" then return false end
+    local oldValue = sequence["Macros"]   -- read the pre-rename field name
+    if sequence.Versions or not oldValue then return false end
+    sequence.Versions      = oldValue
+    sequence["Macros"]     = nil          -- clear the old field
+    return true
+end
+
 --- Decompress a single class from GSESequences into GSE.Library (internal).
 local function loadOneClass(classid)
     if GSE.LoadedClasses[classid] then return end
@@ -25,6 +41,9 @@ local function loadOneClass(classid)
             function()
                 local localsuccess, uncompressedVersion = GSE.DecodeMessage(j)
                 GSE.Library[classid][i] = uncompressedVersion[2]
+                if migrateSequenceVersions(GSE.Library[classid][i]) then
+                    GSESequences[classid][i] = GSE.EncodeMessage({i, GSE.Library[classid][i]})
+                end
             end
         )
         if err then
@@ -33,6 +52,7 @@ local function loadOneClass(classid)
                     i .. ", You will need to reimport this macro from another source.",
                 err
             )
+            table.insert(GSE.CorruptSequences, {classid = classid, name = i})
         end
     end
 end
@@ -60,6 +80,9 @@ function GSE.EnsureSequenceLoaded(classid, sequenceName)
             local localsuccess, uncompressedVersion = GSE.DecodeMessage(GSESequences[classid][sequenceName])
             if localsuccess then
                 GSE.Library[classid][sequenceName] = uncompressedVersion[2]
+                if migrateSequenceVersions(GSE.Library[classid][sequenceName]) then
+                    GSESequences[classid][sequenceName] = GSE.EncodeMessage({sequenceName, GSE.Library[classid][sequenceName]})
+                end
             end
         end
     )
@@ -72,7 +95,19 @@ function GSE.EnsureSequenceLoaded(classid, sequenceName)
                 sequenceName .. ", You will need to reimport this macro from another source.",
             err
         )
+        table.insert(GSE.CorruptSequences, {classid = classid, name = sequenceName})
     end
+end
+
+--- Remove a corrupt sequence from both compressed storage and the live library.
+function GSE.DeleteCorruptSequence(classid, name)
+    if type(GSESequences) == "table" and type(GSESequences[classid]) == "table" then
+        GSESequences[classid][name] = nil
+    end
+    if type(GSE.Library) == "table" and type(GSE.Library[classid]) == "table" then
+        GSE.Library[classid][name] = nil
+    end
+    GSE.Print(string.format(L["Corrupt sequence '%s' (class %d) deleted."], name, classid))
 end
 
 --- Delete a sequence from the library
@@ -340,6 +375,8 @@ end
 function GSE.ReplaceSequence(classid, sequenceName, sequence)
     GSE.ComputeSequenceDependencies(sequence)
     GSE.SnapshotDependentMacros(sequence)
+    -- Checksum is stamped on export only, not on save, so the stored checksum
+    -- always reflects the last-exported state rather than the current edit state.
     GSESequences[classid][sequenceName] = GSE.EncodeMessage({sequenceName, sequence})
     GSE.Library[classid][sequenceName] = sequence
     GSE:SendMessage(Statics.Messages.SEQUENCE_UPDATED, sequenceName)
@@ -375,6 +412,18 @@ function GSE.LoadStorage(destination)
     end
     -- Now load only the variables these sequences depend on.
     GSE.LoadVariables()
+end
+
+--- Force-load every class that has not yet been decompressed, triggering the
+-- Macros→Versions migration for any sequences still in the old format.
+-- Enqueued via the OOC queue from PLAYER_ENTERING_WORLD so it runs in the
+-- background (on the next OOC tick) without blocking login.
+function GSE.MigrateAllRemainingClasses()
+    for classid = 0, 13 do
+        if not GSE.LoadedClasses[classid] then
+            loadOneClass(classid)
+        end
+    end
 end
 
 --- Compile and register a single variable from its compressed store entry.
@@ -667,13 +716,13 @@ function GSE.PerformReloadSequences(force)
     end
     for name, sequence in pairs(GSE.Library[GSE.GetCurrentClassID()]) do
         if not sequence.MetaData.Disabled then
-            func(name, sequence.Macros[GSE.GetActiveSequenceVersion(name)])
+            func(name, sequence.Versions[GSE.GetActiveSequenceVersion(name)])
         end
     end
     if not GSE.isEmpty(GSE.Library[0]) then
         for name, sequence in pairs(GSE.Library[0]) do
             if GSE.isEmpty(sequence.MetaData.Disabled) then
-                func(name, sequence.Macros[GSE.GetActiveSequenceVersion(name)])
+                func(name, sequence.Versions[GSE.GetActiveSequenceVersion(name)])
             end
         end
     end
@@ -1128,7 +1177,7 @@ function GSE.UpdateIcon(self, reseticon)
         GSE.UsedSequences[gsebutton] = true
     end
     if GSE.Utils then
-        GSE.TraceSequence(gsebutton, step, foundSpell)
+        GSE.TraceSequence(gsebutton, step, foundSpell, executionseq[step] and executionseq[step].blockPath)
     end
     GSE.WagoAnalytics:Switch(gsebutton .. "_" .. GSE.GetCurrentClassID(), true)
 end
@@ -1229,10 +1278,10 @@ function GSE.GetSequenceSummary()
     return returntable
 end
 
-local function buildAction(action, metaData, variables)
+local function buildAction(action, metaData, blockPath)
     if action.Type == Statics.Actions.Loop then
         -- we have a loop within a loop
-        return GSE.processAction(action, metaData, variables)
+        return GSE.processAction(action, metaData, nil, blockPath)
     else
         if GSE.isEmpty(action.type) then
             action.type = "spell"
@@ -1275,6 +1324,9 @@ local function buildAction(action, metaData, variables)
                 end
             end
         end
+        if blockPath then
+            spelllist.blockPath = blockPath
+        end
         return spelllist
     end
 end
@@ -1310,15 +1362,16 @@ local function processRepeats(actionList)
     return actionList
 end
 
-function GSE.processAction(action, metaData, variables)
+function GSE.processAction(action, metaData, variables, path)
     if action.Disabled then
         return
     end
     if action.Type == Statics.Actions.Loop then
         local actionList = {}
         -- setup the interation
-        for _, v in ipairs(action) do
-            local builtaction = GSE.processAction(v, metaData, variables)
+        for idx, v in ipairs(action) do
+            local childPath = path and (path .. "." .. idx) or tostring(idx)
+            local builtaction = GSE.processAction(v, metaData, variables, childPath)
             table.insert(actionList, builtaction)
         end
         local returnActions = {}
@@ -1384,7 +1437,7 @@ function GSE.processAction(action, metaData, variables)
         end
         if clicks > 1 then
             for loop = 1, clicks do
-                table.insert(PauseActions, {["type"] = "click"})
+                table.insert(PauseActions, {["type"] = "click", ["blockPath"] = path})
                 GSE.PrintDebugMessage(loop, "Storage1")
             end
         end
@@ -1415,14 +1468,15 @@ function GSE.processAction(action, metaData, variables)
         end
 
         local actionList = {}
-        for _, v in ipairs(actions) do
-            local builtaction = GSE.processAction(v, metaData, variables)
+        for idx, v in ipairs(actions) do
+            local childPath = path and (path .. "." .. idx) or tostring(idx)
+            local builtaction = GSE.processAction(v, metaData, variables, childPath)
             table.insert(actionList, builtaction)
         end
 
         return actionList
     elseif action.Type == Statics.Actions.Action then
-        local builtstuff = buildAction(action, metaData)
+        local builtstuff = buildAction(action, metaData, path)
         return builtstuff
     elseif action.Type == Statics.Actions.Repeat then
         if GSE.isEmpty(action.Interval) then
@@ -1435,7 +1489,7 @@ function GSE.processAction(action, metaData, variables)
         end
 
         local returnAction = {
-            ["Action"] = buildAction(action, metaData),
+            ["Action"] = buildAction(action, metaData, path),
             ["Interval"] = tonumber(action.Interval)
         }
 
@@ -1445,7 +1499,7 @@ function GSE.processAction(action, metaData, variables)
         if action.Sequence then
             local sequence = GSE.FindSequence(action.Sequence)
             if sequence then
-                return GSE.CompileTemplate(GSE.UnEscapeTable(GSE.TranslateSequence(sequence.Macros[GSE.GetActiveSequenceVersion(action.Sequence)], Statics.TranslatorMode.String)))
+                return GSE.CompileTemplate(GSE.UnEscapeTable(GSE.TranslateSequence(sequence.Versions[GSE.GetActiveSequenceVersion(action.Sequence)], Statics.TranslatorMode.String)))
             end
         end
         return
@@ -1538,14 +1592,19 @@ local function PCallCreateGSE3Button(spelllist, name, combatReset)
     end
 
     for k, v in pairs(spelllist[1]) do
-        if k == "macrotext" then
+        if k == "blockPath" then
+            -- not transferred to the secure button
+        elseif k == "macrotext" then
             gsebutton:SetAttribute("macro", nil)
             gsebutton:SetAttribute("unit", nil)
+            gsebutton:SetAttribute(k, v)
         elseif k == "macro" then
             gsebutton:SetAttribute("macrotext", nil)
             gsebutton:SetAttribute("unit", nil)
+            gsebutton:SetAttribute(k, v)
+        else
+            gsebutton:SetAttribute(k, v)
         end
-        gsebutton:SetAttribute(k, v)
     end
 
     gsebutton:SetAttribute("stepped", false)
@@ -1555,8 +1614,10 @@ local function PCallCreateGSE3Button(spelllist, name, combatReset)
         local line
         steps[k] = {}
         for i, j in pairs(v) do
-            line = i .. "\002" .. j
-            tinsert(steps[k], line)
+            if i ~= "blockPath" then
+                line = i .. "\002" .. j
+                tinsert(steps[k], line)
+            end
         end
     end
 

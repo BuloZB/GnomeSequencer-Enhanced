@@ -122,6 +122,7 @@ globals = {
     "Talented",
     -- Lua
     "bit.band",
+    "bit.bxor",
     "bit.lshift",
     "bit.rshift",
     "string.split",
@@ -520,5 +521,6 @@ globals = {
     "ActionButton_Update",
     "CreateSettingsButtonInitializer",
     "ActionButton_SetTooltip",
-    "BFButton"
+    "BFButton",
+    "ColorPickerFrame"
 }
