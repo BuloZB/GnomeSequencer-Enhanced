@@ -11,44 +11,106 @@ local TOOLBAR_OFFSET = 100
 local SCROLLCONTAINER_OFFSET = 120
 
 
-if GSE.isEmpty(GSE.CreateIconControl) then
-    GSE.CreateIconControl = function(action, version, keyPath, sequence, frame)
-        local lbl = AceGUI:Create("Label")
-        lbl:SetFontObject(GameFontNormalLarge)
-        lbl:SetWidth(15)
-        lbl:SetHeight(15)
+function GSE.CreateIconControl(action, version, keyPath, sequence, frame)
+    local lbl = AceGUI:Create("InteractiveLabel")
+    lbl:SetFontObject(GameFontNormalLarge)
+    lbl:SetWidth(25)
+    lbl:SetHeight(25)
 
+    -- Derives the display icon for the block.  Called once on creation and
+    -- again whenever the spell/item/toy field changes (via RefreshIcon).
+    -- Honours a manually-assigned action.Icon; otherwise infers from the
+    -- spell, item, toy, or macro content.
+    local function refreshIcon()
+        local iconID = Statics.QuestionMarkIconID
         if action.Icon then
-            lbl:SetText("|T" .. action.Icon .. ":0|t")
-            return lbl
-        end
-        local spellinfo = {}
-        spellinfo.iconID = Statics.QuestionMarkIconID
-
-        if action.type == "macro" then
-            local macro = GSE.UnEscapeString(action.macro)
+            iconID = action.Icon
+        elseif action.type == "spell" then
+            local si = action.spell and C_Spell.GetSpellInfo(action.spell)
+            if si and si.iconID then iconID = si.iconID end
+        elseif action.type == "item" or action.type == "toy" then
+            local itemKey = action.item or action.toy
+            if itemKey then
+                local icon = select(10, GetItemInfo(itemKey))
+                if icon then iconID = icon end
+            end
+        elseif action.type == "macro" then
+            local macro = action.macro and GSE.UnEscapeString(action.macro) or ""
             if string.sub(macro, 1, 1) == "/" then
                 local spellstuff = GSE.GetSpellsFromString(macro)
-                if spellstuff and #spellstuff > 1 then
-                    spellstuff = spellstuff[1]
-                end
-                if spellstuff then
-                    spellinfo = spellstuff
-                end
-            else
-                spellinfo.name = action.macro
-                local macindex = GetMacroIndexByName(spellinfo.name)
-                local _, iconid, _ = GetMacroInfo(macindex)
-                spellinfo.iconID = iconid
+                if spellstuff and #spellstuff > 1 then spellstuff = spellstuff[1] end
+                if spellstuff and spellstuff.iconID then iconID = spellstuff.iconID end
+            elseif string.sub(macro, 1, 1) ~= "=" then
+                -- External WoW macro name: look up its icon.
+                -- Variable references (starting with "=") keep the QuestionMarkIconID
+                -- so the icon widget is visible and patrons can click to assign one.
+                local macindex = GetMacroIndexByName(macro)
+                local _, micon = GetMacroInfo(macindex)
+                if micon then iconID = micon end
             end
-        elseif action.type == "Spell" then
-            spellinfo = C_Spell.GetSpellInfo(action.spell)
         end
-        if spellinfo.iconID then
-            lbl:SetText("|T" .. spellinfo.iconID .. ":0|t")
-        end
-        return lbl
+        lbl:SetText("|T" .. iconID .. ":0|t")
     end
+
+    -- Expose so callers can refresh the icon after the spell field changes.
+    lbl.RefreshIcon = refreshIcon
+    refreshIcon()
+
+    local spellinfolist = {}
+    if action.type == "macro" then
+        local macro = GSE.UnEscapeString(action.macro)
+        if string.sub(macro, 1, 1) == "/" then
+            local lines = GSE.SplitMeIntoLines(macro)
+            for _, v in ipairs(lines) do
+                local spellinfo = GSE.GetSpellsFromString(v)
+                if spellinfo and #spellinfo > 1 then
+                    for _, j in ipairs(spellinfo) do
+                        if j and j.iconID then
+                            table.insert(spellinfolist, j)
+                        end
+                    end
+                else
+                    if spellinfo and spellinfo.iconID then
+                        table.insert(spellinfolist, spellinfo)
+                    end
+                end
+            end
+        else
+            local spellinfo = {}
+            spellinfo.name = action.macro
+            local macindex = GetMacroIndexByName(spellinfo.name)
+            local _, iconid, _ = GetMacroInfo(macindex)
+            if macindex and iconid then
+                spellinfo.iconID = iconid
+                table.insert(spellinfolist, spellinfo)
+            end
+        end
+    elseif action.type == "Spell" then
+        local spellinfo = C_Spell.GetSpellInfo(action.spell)
+        if spellinfo and spellinfo.iconID then
+            table.insert(spellinfolist, spellinfo)
+        end
+    end
+
+    lbl:SetCallback("OnClick", function(widget, button)
+        MenuUtil.CreateContextMenu(frame, function(ownerRegion, rootDescription)
+            rootDescription:CreateTitle(L["Select Icon"])
+            for _, v in pairs(spellinfolist) do
+                rootDescription:CreateButton(
+                    "|T" .. v.iconID .. ":0|t " .. v.name,
+                    function()
+                        lbl:SetText("|T" .. v.iconID .. ":0|t")
+                        sequence.Versions[version].Actions[keyPath].Icon = v.iconID
+                    end
+                )
+            end
+            -- Extension point: QoL and other modules append extra items here.
+            if GSE.OnBuildIconMenu then
+                GSE.OnBuildIconMenu(rootDescription, lbl, sequence, version, keyPath)
+            end
+        end)
+    end)
+    return lbl
 end
 local function BuildVersionLabel(version, label, excludekey)
     version = tostring(version)
@@ -152,16 +214,17 @@ function GSE.CreateEditor()
             editframe:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", editorleft, editortop)
         end
     end
-    editframe.Height = GSEOptions.editorHeight and GSEOptions.editorHeight or 500
-    editframe.Width = GSEOptions.editorWidth and GSEOptions.editorWidth or 700
+    local seOpts = GSEOptions.frameLocations and GSEOptions.frameLocations.sequenceeditor or {}
+    editframe.Height = seOpts.height or 500
+    editframe.Width = seOpts.width or 700
 
     if editframe.Height < DEFAULT_HEIGHT then
         editframe.Height = DEFAULT_HEIGHT
-        GSEOptions.editorHeight = editframe.Height
+        GSEOptions.frameLocations.sequenceeditor.height = editframe.Height
     end
     if editframe.Width < DEFAULT_WIDTH then
         editframe.Width = DEFAULT_WIDTH
-        GSEOptions.editorWidth = editframe.Width
+        GSEOptions.frameLocations.sequenceeditor.width = editframe.Width
     end
     editframe.frame:SetHeight(editframe.Height)
     editframe.frame:SetWidth(editframe.Width)
@@ -185,10 +248,10 @@ function GSE.CreateEditor()
             local left, bottom, w, h = self.frame:GetRect()
             GSEOptions.frameLocations.sequenceeditor.left = left
             GSEOptions.frameLocations.sequenceeditor.top = bottom + h
-            GSEOptions.editorHeight = h
-            GSEOptions.editorWidth = w
+            GSEOptions.frameLocations.sequenceeditor.height = h
+            GSEOptions.frameLocations.sequenceeditor.width = w
             if self.treeContainer then
-                GSEOptions.editorTreeWidth = self.treeContainer:GetTreeWidth()
+                GSEOptions.frameLocations.sequenceeditor.treeWidth = self.treeContainer:GetTreeWidth()
             end
             self:Hide()
             self.Sequence = nil
@@ -360,8 +423,9 @@ function GSE.CreateEditor()
     local treeContainer = AceGUI:Create("GSE-TreeGroup")
     treeContainer:SetFullHeight(true)
     treeContainer:SetFullWidth(true)
-    if GSEOptions.editorTreeWidth then
-        treeContainer:SetTreeWidth(GSEOptions.editorTreeWidth, true)
+    local seTreeWidth = GSEOptions.frameLocations and GSEOptions.frameLocations.sequenceeditor and GSEOptions.frameLocations.sequenceeditor.treeWidth
+    if seTreeWidth then
+        treeContainer:SetTreeWidth(seTreeWidth, true)
     end
 
     editframe.treeContainer = treeContainer
@@ -1264,6 +1328,10 @@ function GSE.CreateEditor()
                 typegroup:SetLayout("Flow")
                 local actionicon = GSE.CreateIconControl(action, version, keyPath, editframe.Sequence, macroPanel.frame)
                 typegroup:AddChild(actionicon)
+                -- Refresh the icon when the user finishes editing the spell/item/toy field.
+                spellEditBox:SetCallback("OnEditFocusLost", function()
+                    actionicon:RefreshIcon()
+                end)
                 local spellradio = AceGUI:Create("CheckBox")
                 spellradio:SetType("radio")
                 spellradio:SetLabel(L["Spell"])
@@ -2350,8 +2418,8 @@ function GSE.CreateEditor()
                 editframe.Width = 700
                 editframe:SetWidth(editframe.Width)
             end
-            GSEOptions.editorHeight = editframe.Height
-            GSEOptions.editorWidth = editframe.Width
+            GSEOptions.frameLocations.sequenceeditor.height = editframe.Height
+            GSEOptions.frameLocations.sequenceeditor.width = editframe.Width
             if editframe.scroller then
                 editframe.scroller:SetHeight(editframe.Height - TOOLBAR_OFFSET)
                 editframe.scroller:DoLayout()

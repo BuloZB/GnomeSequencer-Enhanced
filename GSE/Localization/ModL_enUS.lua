@@ -177,6 +177,7 @@ L["Reload All"] = true
 L["Restore"] = true
 L["Individual Sequences - %s"] = true
 L["Restore a single sequence from this plugin"] = true
+L["Sequence '%s' was created with an older version of GSE (%s) - importing anyway as part of collection."] = true
 L["Compatible with this version of GSE"] = true
 L["Not compatible with this version of GSE (sequence version: %s)"] = true
 L["unknown"] = true
@@ -470,6 +471,7 @@ L["Variables"] = true
 L["Name"] = true
 L["Delete Variable"] = true
 L["Delete this variable from the sequence."] = true
+L["Comma-separated list of WoW events or GSE messages that trigger this variable. You can type names directly or pick from the list on the right."] = true
 L["Default Editor Height"] = true
 L["How many pixels high should the Editor start at.  Defaults to 700"] = true
 L["Default Editor Width"] = true
@@ -566,6 +568,7 @@ L["If Blocks Require a variable."] = true
 
 --3.0.35
 L["Window Sizes"] = true
+L["Frame Locations"] = true
 L["Default Debugger Height"] = true
 L["How many pixels high should the Debuger start at.  Defaults to 500"] = true
 L["Default Debugger Width"] = true
@@ -658,6 +661,7 @@ L[
     ] = true
 L["This function will open a window enabling you to edit the spell cache and any mappings between individual spellIDs and spellnames."] = true
 L["Edit Spell Cache"] = true
+L["The GSE_GUI Module needs to be enabled to edit the spell cache."] = true
 L["Edit"] = true
 L["Reload"] = true
 L["Spell Cache Editor"] = true
@@ -739,6 +743,8 @@ L["Toy"] = true
 L["Macro Name or Macro Commands"] = true
 L["Pet Ability"] = true
 L["This macro is not compatible with this version of the game and cannot be imported."] = true
+L["Sequence Named %s was not specifically designed for this version of the game.  It may need adjustments."] = true
+L["with no body"] = true
 L["GSE Discord"] = true
 L["Report an Issue"] = true
 L["GSE: Whats New in "] = "GSE: What's new in "
@@ -772,6 +778,7 @@ L["GSE: Middle Click to open the Keybinding Interface"] = true
 
 -- #1621
 L["Select Icon"] = true
+L["Choose any icon..."] = true
 
 -- #1683
 L["There is an error in the sequence that needs to be corrected before it can be saved."] = true

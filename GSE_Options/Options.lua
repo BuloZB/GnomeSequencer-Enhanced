@@ -406,8 +406,18 @@ local function createBlizzOptions(category)
                 local layout = SettingsPanel:GetLayout(pluginOptions)
                 local capturedPackName = packName
                 local capturedV = v
+
+                -- Section header per plugin so each one is visually separated.
+                -- This also acts as the closing boundary for the previous plugin's
+                -- individual sequence items, preventing them from bleeding into the
+                -- next plugin's Reload All button.
+                layout:AddInitializer(Settings.CreateElementInitializer("SettingsListSectionHeaderTemplate", {
+                    name = displayName,
+                    tooltip = desc,
+                }))
+
                 layout:AddInitializer(CreateSettingsButtonInitializer(
-                    displayName,
+                    L["Reload All"],
                     L["Reload All"],
                     function()
                         if capturedV.Sequences then
@@ -422,10 +432,6 @@ local function createBlizzOptions(category)
 
                 -- Per-sequence restore buttons (only available when the plugin passes its Sequences table)
                 if not GSE.isEmpty(v.Sequences) and v.SequenceNames then
-                    layout:AddInitializer(Settings.CreateElementInitializer("SettingsListSectionHeaderTemplate", {
-                        name = string.format(L["Individual Sequences - %s"], displayName),
-                        tooltip = L["Restore a single sequence from this plugin"],
-                    }))
                     for _, seqName in ipairs(v.SequenceNames) do
                         local encodedSeq = v.Sequences[seqName]
                         local status = GSE.GetPluginSequenceStatus(encodedSeq)
@@ -468,33 +474,48 @@ local function createBlizzOptions(category)
         end
     end
 
-    -- Window Sizes
+    -- Frame Locations
     do
-        local windowOptions = Settings.RegisterVerticalLayoutSubcategory(category, L["Window Sizes"])
+        local windowOptions = Settings.RegisterVerticalLayoutSubcategory(category, L["Frame Locations"])
 
         do
             local layout = SettingsPanel:GetLayout(windowOptions)
             layout:AddInitializer(Settings.CreateElementInitializer("SettingsListSectionHeaderTemplate", {name = L["Sequence Editor"], tooltip = L["Sequence Editor"]}))
         end
         do
-            local function GetValue() return GSEOptions.editorHeight or 700 end
-            local function SetValue(val) if val >= 500 then GSEOptions.editorHeight = val end end
-            local setting = Settings.RegisterProxySetting(windowOptions, "editorHeight", Settings.VarType.Number, L["Default Editor Height"], 700, GetValue, SetValue)
+            local function GetValue()
+                local se = GSEOptions.frameLocations and GSEOptions.frameLocations.sequenceeditor
+                return (se and se.height) or 500
+            end
+            local function SetValue(val)
+                if val >= 500 then GSEOptions.frameLocations.sequenceeditor.height = val end
+            end
+            local setting = Settings.RegisterProxySetting(windowOptions, "editorHeight", Settings.VarType.Number, L["Default Editor Height"], 500, GetValue, SetValue)
             local options = Settings.CreateSliderOptions(500, 2000, 10)
             options:SetLabelFormatter(MinimalSliderWithSteppersMixin.Label.Right)
             Settings.CreateSlider(windowOptions, setting, options, L["How many pixels high should the Editor start at.  Defaults to 700"])
         end
         do
-            local function GetValue() return GSEOptions.editorWidth or 700 end
-            local function SetValue(val) if val >= 700 then GSEOptions.editorWidth = val end end
+            local function GetValue()
+                local se = GSEOptions.frameLocations and GSEOptions.frameLocations.sequenceeditor
+                return (se and se.width) or 700
+            end
+            local function SetValue(val)
+                if val >= 700 then GSEOptions.frameLocations.sequenceeditor.width = val end
+            end
             local setting = Settings.RegisterProxySetting(windowOptions, "editorWidth", Settings.VarType.Number, L["Default Editor Width"], 700, GetValue, SetValue)
             local options = Settings.CreateSliderOptions(700, 3000, 10)
             options:SetLabelFormatter(MinimalSliderWithSteppersMixin.Label.Right)
             Settings.CreateSlider(windowOptions, setting, options, L["How many pixels wide should the Editor start at.  Defaults to 700"])
         end
         do
-            local function GetValue() return GSEOptions.editorTreeWidth or 150 end
-            local function SetValue(val) if val >= 50 then GSEOptions.editorTreeWidth = val end end
+            local function GetValue()
+                local se = GSEOptions.frameLocations and GSEOptions.frameLocations.sequenceeditor
+                return (se and se.treeWidth) or 150
+            end
+            local function SetValue(val)
+                if val >= 50 then GSEOptions.frameLocations.sequenceeditor.treeWidth = val end
+            end
             local setting = Settings.RegisterProxySetting(windowOptions, "editorTreeWidth", Settings.VarType.Number, L["Default Tree Panel Width"], 150, GetValue, SetValue)
             local options = Settings.CreateSliderOptions(50, 500, 10)
             options:SetLabelFormatter(MinimalSliderWithSteppersMixin.Label.Right)
