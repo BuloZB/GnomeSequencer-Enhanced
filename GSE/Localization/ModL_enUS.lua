@@ -42,6 +42,7 @@ L["Macros[%d].Actions[%d] macro text has unbalanced brackets (%d '[' vs %d ']')"
 L["Macros[%d].Actions[%d] uses unrecognized slash command: /%s"] = true
 L["Macros[%d].Actions[%d] uses // comments instead of --; GSE will not strip these on compile"] = true
 L["Issues found in '%s' (class library %d):"] = true
+L["Sequence '%s' (class %d) version %d block %d has no icon set (showing ?).  Open the block in the editor and assign an icon."] = true
 L["To attempt automatic repair run: %s/run GSE.FixSequenceStructure(%d, \"%s\")%s"] = true
 L["Compile error in Macros[%d] of '%s': %s"] = true
 L["%d issue(s) found.  See above for details and fix commands."] = true
@@ -801,7 +802,7 @@ L[
     ] = true
 L["Use MultiClick Buttons"] = true
 L[
-        "GSE Sequences are converted to a button that responds to 'Clicks' or Keyboard keypresses (WoW calls these Hardware Events).  \n\nWhen you use a KeyBind with a sequence, WoW sends two hardware events each time. With this setting on, GSE then interprets these two clicks as one and advances your sequence one step.  With this off it would advance two steps.  \n\nIn comparison Actionbar Overrides and '/click SEQUENCE' macros only sends one hardware Event.  If you primarily use Keybinds over Actionbar Overrides over Keybinds you want this set to false."
+        "GSE Sequences are converted to a button that responds to 'Clicks' or Keyboard keypresses (WoW calls these Hardware Events).  \n\nWhen you use a KeyBind with a sequence, WoW sends two hardware events each time. With this setting on, GSE then interprets these two clicks as one and advances your sequence one step.  With this off it would advance two steps.  \n\nIn comparison Actionbar Overrides and '/click SEQUENCE' macros only sends one hardware Event.  If you primarily use Keybinds over Actionbar Overrides over Keybinds you want this set true.  If however you want to use Actionbar Overrides this must be false."
     ] = true
 L["Button Settings"] = true
 
@@ -828,6 +829,7 @@ L["Show Sequence Name"] = true
 L["Show the Name of the Sequence"] = true
 -- #1846
 L["Options Not Enabled"] = true
+L["Options will open after combat ends."] = true
 L["Import String Not Recognised."] = true
 L["GSE Import Successful."] = true
 L["GSE Collection to Import."] = true
