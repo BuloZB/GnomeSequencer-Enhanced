@@ -735,6 +735,11 @@ function GSE:CreateConfigPanels()
             local setting = Settings.RegisterAddOnSetting(generalOptions, "companionAutoAccept", "CompanionAutoAccept", GSEOptions, Settings.VarType.Boolean, L["Auto Accept Companion Updates"], false)
             Settings.CreateCheckbox(generalOptions, setting, L["Automatically import sequences pushed from the GSE Companion app without showing the import dialog. Deletes will still require confirmation."])
         end
+        -- Sync WoW Macros to GSEMacros
+        do
+            local setting = Settings.RegisterAddOnSetting(generalOptions, "syncWoWMacros", "SyncWoWMacros", GSEOptions, Settings.VarType.Boolean, L["Sync WoW Macros to GSE.Tools"], false)
+            Settings.CreateCheckbox(generalOptions, setting, L["When enabled, all of your WoW macros are imported into GSE.Tools and kept in sync via the GSE Companion App. Changes made via the /macro dialog are reflected in GSE's Managed Macro Section, and incoming changes from GSE.Tools are written back to your WoW macros."])
+        end
 
         do
             local layout = SettingsPanel:GetLayout(generalOptions)

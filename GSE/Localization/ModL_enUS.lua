@@ -870,6 +870,10 @@ L["Position Locked"] = true
 L["Change"] = true
 L["Add an Embed Block.  Embed Blocks allow you to incorporate another sequence into this sequence at the current block."] = true
 L["Are you sure you want to delete %s?  This will delete the macro and all versions.  This action cannot be undone."] = true
+
+L["When enabled, all of your WoW macros are imported into GSE.Tools and kept in sync via the GSE Companion App. Changes made via the /macro dialog are reflected in GSE's Managed Macro Section, and incoming changes from GSE.Tools are written back to your WoW macros."] = true
+L["Sync WoW Macros to GSE.Tools"] = true
+
 L["WhatsNew"] =
 [[|cFFFFFFFFGS|r|cFF00FFFFE|r 3.3.04
 
