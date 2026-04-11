@@ -111,8 +111,8 @@ globals = {
     -- Internal globals (cross-file)
     "GSE_Ed25519Verify",
     "GSE_SHA512",
-    "GSEIncomingQueue",
     "GSECompanionQueue",
+    "GSECompanionBridgeDB",
     -- GSE
     "GSE",
     "GSE2",
