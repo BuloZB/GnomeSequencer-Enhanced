@@ -30,6 +30,8 @@ L["Missing MetaData table"] = true
 L["Missing or invalid Macros table"] = true
 L["MetaData.SpecID is missing"] = true
 L["Macros array is empty (no versions defined)"] = true
+L["Versions starts at index 0 (Lua ipairs starts at 1 → editor and runtime see no versions). %d entr%s at index 0."] = true
+L["Sequence '%s' is incompatible with the current version of GSE. Upload it to https://gse.tools to update it to the current format, then re-import."] = true
 L["Macros array has gaps: %d version(s) reachable of %d total (max index %d)"] = true
 L["MetaData.%s = %d references a non-existent Macros version (max valid index: %d)"] = true
 L["Macros[%d] is not a table"] = true
@@ -845,6 +847,9 @@ L["GSE Collection to Import."] = true
 L["Removed unreadable sequence "] = true
 L[
         "/gse checksequencesforerrors|r will loop through your macros and check for corrupt macro versions.  This will then show how to correct these issues."
+    ] = true
+L[
+        "/gse clearincoming|r will abort any pending GSE Companion updates without importing them, and tell the Companion to prune them."
     ] = true
 
 -- #1854

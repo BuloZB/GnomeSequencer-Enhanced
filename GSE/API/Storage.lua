@@ -13,16 +13,59 @@ GSE.LoadedClasses = GSE.LoadedClasses or {}
 -- offer the player interactive options (delete / skip) rather than silent loss.
 GSE.CorruptSequences = GSE.CorruptSequences or {}
 
---- One-off migration: rename the old "Macros" array to "Versions" on a sequence table.
--- Uses bracket notation for the old key so future rename passes cannot corrupt this guard.
--- Returns true when migration was performed so the caller can re-save to disk.
+-- Walk an action/version tree and rename legacy `macrotext` → `macro`.
+-- Platform storage historically emitted `macrotext` (a WoW SecureActionButton
+-- runtime attribute name, never a stored-data field). The editor and runtime
+-- read `macro`, so blocks that only have `macrotext` fall through the spell
+-- branch and crash C_Spell.GetSpellInfo. Returns true if anything changed.
+local function renameMacrotextInTree(node)
+    if type(node) ~= "table" then return false end
+    local changed = false
+    if node.macrotext ~= nil then
+        if node.macro == nil then
+            node.macro = node.macrotext
+        end
+        node.macrotext = nil
+        changed = true
+    end
+    for _, v in pairs(node) do
+        if type(v) == "table" and renameMacrotextInTree(v) then
+            changed = true
+        end
+    end
+    return changed
+end
+
+--- Per-load checks applied to every sequence:
+---  * recursively rename legacy `macrotext` → `macro` inside action blocks
+---  * clear MetaData.Checksum when anything changed (the stored signature was
+---    produced against the pre-rename tree and would no longer verify; the
+---    addon's Checksum verifier returns "no_checksum" for an absent sig and
+---    suppresses the warning until the sequence is re-exported).
+--
+-- Returns true when any change was made so the caller can re-save to disk.
+-- Returns false, "macros-deprecated" when the sequence still uses the
+-- pre-#1853 `Macros` field name. The on-disk Macros→Versions migration
+-- has been retired: the addon refuses to interpret a Macros-only record
+-- and the caller is expected to surface a "upload to gse.tools to
+-- convert" message and skip the sequence.
 local function migrateSequenceVersions(sequence)
     if type(sequence) ~= "table" then return false end
-    local oldValue = sequence["Macros"]   -- read the pre-rename field name
-    if sequence.Versions or not oldValue then return false end
-    sequence.Versions      = oldValue
-    sequence["Macros"]     = nil          -- clear the old field
-    return true
+    if sequence["Macros"] ~= nil and sequence.Versions == nil then
+        return false, "macros-deprecated"
+    end
+    local changed = false
+    if type(sequence.Versions) == "table" then
+        for _, version in pairs(sequence.Versions) do
+            if renameMacrotextInTree(version) then
+                changed = true
+            end
+        end
+    end
+    if changed and type(sequence.MetaData) == "table" then
+        sequence.MetaData.Checksum = nil
+    end
+    return changed
 end
 
 --- Decompress a single class from GSESequences into GSE.Library (internal).
@@ -41,17 +84,22 @@ local function loadOneClass(classid)
             function()
                 local localsuccess, uncompressedVersion = GSE.DecodeMessage(j)
                 GSE.Library[classid][i] = uncompressedVersion[2]
-                if migrateSequenceVersions(GSE.Library[classid][i]) then
+                local changed, reason = migrateSequenceVersions(GSE.Library[classid][i])
+                if reason == "macros-deprecated" then
+                    -- Refuse to load. The on-disk record uses the old
+                    -- 'Macros' field; the addon no longer auto-renames.
+                    GSE.Library[classid][i] = nil
+                    error(string.format(
+                        L["Sequence '%s' is incompatible with the current version of GSE. Upload it to https://gse.tools to update it to the current format, then re-import."],
+                        i))
+                end
+                if changed then
                     GSESequences[classid][i] = GSE.EncodeMessage({i, GSE.Library[classid][i]})
                 end
             end
         )
         if err then
-            GSE.Print(
-                "There was an error processing " ..
-                    i .. ", You will need to reimport this macro from another source.",
-                err
-            )
+            GSE.Print(tostring(err), "Error")
             table.insert(GSE.CorruptSequences, {classid = classid, name = i})
         end
     end
@@ -80,7 +128,14 @@ function GSE.EnsureSequenceLoaded(classid, sequenceName)
             local localsuccess, uncompressedVersion = GSE.DecodeMessage(GSESequences[classid][sequenceName])
             if localsuccess then
                 GSE.Library[classid][sequenceName] = uncompressedVersion[2]
-                if migrateSequenceVersions(GSE.Library[classid][sequenceName]) then
+                local changed, reason = migrateSequenceVersions(GSE.Library[classid][sequenceName])
+                if reason == "macros-deprecated" then
+                    GSE.Library[classid][sequenceName] = nil
+                    error(string.format(
+                        L["Sequence '%s' is incompatible with the current version of GSE. Upload it to https://gse.tools to update it to the current format, then re-import."],
+                        sequenceName))
+                end
+                if changed then
                     GSESequences[classid][sequenceName] = GSE.EncodeMessage({sequenceName, GSE.Library[classid][sequenceName]})
                 end
             end
@@ -1454,7 +1509,19 @@ function GSE.processAction(action, metaData, variables, path)
             funct = string.sub(funct, 2, string.len(funct))
         end
 
-        local val = loadstring("return " .. funct)()
+        -- User-defined GSE.V.* variables can throw at runtime (missing locale
+        -- keys, stale spell ids, nil C_API responses). A throw here would kill
+        -- the whole reload pass for every sequence. Treat any error as a
+        -- false branch decision — the macro continues to compile.
+        local val = false
+        local fn, loadErr = loadstring("return " .. funct)
+        if fn then
+            local ok, result = pcall(fn)
+            if ok then val = result
+            else GSE.PrintDebugMessage("If-block eval error: " .. tostring(result), "Storage") end
+        else
+            GSE.PrintDebugMessage("If-block load error: " .. tostring(loadErr), "Storage")
+        end
 
         local actions
         if val then

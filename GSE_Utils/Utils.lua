@@ -117,6 +117,15 @@ function GSE.OOCAddSequenceToCollection(sequenceName, sequence, classid)
 end
 
 function GSE.OOCPerformMergeAction(action, classid, sequenceName, newSequence)
+    -- Refuse to merge/replace with a Macros-only payload. Auto-rename
+    -- has been retired; the user must re-export through gse.tools so
+    -- the source is in the current schema before re-import.
+    if type(newSequence) == "table" and newSequence.Macros ~= nil and newSequence.Versions == nil then
+        GSE.Print(string.format(
+            L["Sequence '%s' is incompatible with the current version of GSE. Upload it to https://gse.tools to update it to the current format, then re-import."],
+            sequenceName), L["Import"])
+        return
+    end
     if GSE.isEmpty(newSequence.LastUpdated) then
         newSequence.LastUpdated = GSE.GetTimestamp()
     end
@@ -135,6 +144,15 @@ function GSE.OOCPerformMergeAction(action, classid, sequenceName, newSequence)
         sequenceName = tempseqName
     end
     if action == "MERGE" then
+        -- Both sides need a Versions table. Migration above set them up;
+        -- belt-and-braces: if either is still nil, init/empty out so the
+        -- ipairs/insert doesn't crash and we don't silently no-op.
+        if type(GSE.Library[classid][sequenceName].Versions) ~= "table" then
+            GSE.Library[classid][sequenceName].Versions = {}
+        end
+        if type(newSequence.Versions) ~= "table" then
+            newSequence.Versions = {}
+        end
         for k, v in ipairs(newSequence.Versions) do
             GSE.PrintDebugMessage("adding " .. k, "Storage")
             table.insert(GSE.Library[classid][sequenceName].Versions, v)
@@ -256,10 +274,16 @@ local function fixContainer(v)
 end
 
 function GSE.processWAGOImport(input, dontencode)
-    -- Migrate pre-#1853 sequences that stored versions under "Macros" instead of "Versions".
-    if input.Macros and not input.Versions then
-        input.Versions = input.Macros
-        input.Macros = nil
+    -- Pre-#1853 records stored versions under "Macros" instead of "Versions".
+    -- The auto-rename has been retired: refuse to interpret a Macros-only
+    -- record so the user can re-export from gse.tools and re-import.
+    -- Returns nil; callers must handle that as "abort this import".
+    if input and type(input) == "table" and input.Macros ~= nil and input.Versions == nil then
+        local name = (input.MetaData and input.MetaData.Name) or input.SequenceName or "<unknown>"
+        GSE.Print(string.format(
+            L["Sequence '%s' is incompatible with the current version of GSE. Upload it to https://gse.tools to update it to the current format, then re-import."],
+            name), L["Import"])
+        return nil
     end
     for k, v in ipairs(input) do
         if type(v) == "table" then
@@ -283,7 +307,10 @@ end
 -- (version-mismatch and checksum warnings). Used by collection imports so that
 -- the synchronous loop over N sequences does not clobber a single shared popup
 -- slot, which would silently drop all but the last sequence.
-function GSE.ImportSerialisedSequence(importstring, forcereplace, skipDialogs)
+-- forcemerge: when true, route conflict resolution to PerformMergeAction("MERGE")
+-- without showing the compare dialog. Mutually exclusive with forcereplace —
+-- if both are true, forcereplace wins (defensive).
+function GSE.ImportSerialisedSequence(importstring, forcereplace, skipDialogs, forcemerge)
     local decompresssuccess, actiontable
     if type(importstring) == "table" then
         decompresssuccess, actiontable = true, importstring
@@ -295,14 +322,24 @@ function GSE.ImportSerialisedSequence(importstring, forcereplace, skipDialogs)
     if decompresssuccess and actiontable then
         if actiontable.type == "COLLECTION" then
             actiontable = actiontable.payload
-            for _, v in pairs(actiontable["Variables"]) do
-                GSE.ImportSerialisedSequence(v, forcereplace, true)
+            -- Sequences/Variables/Macros in a COLLECTION payload are keyed by
+            -- name and their values are the raw data tables (no {name, data}
+            -- array wrapper). Propagate the key into the object's identity
+            -- field so the recursive call can resolve it.
+            for name, v in pairs(actiontable["Variables"]) do
+                if type(v) == "table" and not v.name then v.name = name end
+                GSE.ImportSerialisedSequence(v, forcereplace, true, forcemerge)
             end
-            for _, v in pairs(actiontable["Sequences"]) do
-                GSE.ImportSerialisedSequence(v, forcereplace, true)
+            for name, v in pairs(actiontable["Sequences"]) do
+                if type(v) == "table" then
+                    v.MetaData = v.MetaData or {}
+                    if not v.MetaData.Name then v.MetaData.Name = name end
+                end
+                GSE.ImportSerialisedSequence(v, forcereplace, true, forcemerge)
             end
-            for _, v in pairs(actiontable["Macros"]) do
-                GSE.ImportSerialisedSequence(v, forcereplace, true)
+            for name, v in pairs(actiontable["Macros"]) do
+                if type(v) == "table" and not v.name then v.name = name end
+                GSE.ImportSerialisedSequence(v, forcereplace, true, forcemerge)
             end
             GSE:SendMessage(Statics.Messages.COLLECTION_IMPORTED)
         elseif actiontable.objectType == "MACRO" then
@@ -338,6 +375,10 @@ function GSE.ImportSerialisedSequence(importstring, forcereplace, skipDialogs)
             end
             local seqName = k
             v = GSE.processWAGOImport(v, true)
+            -- processWAGOImport returns nil when it refuses an import
+            -- (e.g. pre-#1853 records still using `Macros`). It already
+            -- printed the user-facing message; we just abort this branch.
+            if not v then return false end
 
             if v.MetaData.GSEVersion and v.MetaData.GSEVersion > 3200 then
                 if v.MetaData.GSEVersion < GSE.VersionNumber then
@@ -375,6 +416,18 @@ function GSE.ImportSerialisedSequence(importstring, forcereplace, skipDialogs)
 
             if forcereplace then
                 GSE.PerformMergeAction("REPLACE", GSE.GetClassIDforSpec(v.MetaData.SpecID), seqName, v)
+            elseif forcemerge then
+                -- Route to MERGE without compare dialog. The classid lookup
+                -- mirrors AddSequenceToCollection's resolution: prefer the
+                -- spec's class id, fall back to scanning class libs for an
+                -- existing same-name sequence.
+                local classid = GSE.GetClassIDforSpec(v.MetaData and v.MetaData.SpecID)
+                if (classid == nil or classid == 0) and GSE.Library then
+                    for cid = 0, 13 do
+                        if GSE.Library[cid] and GSE.Library[cid][seqName] then classid = cid break end
+                    end
+                end
+                GSE.PerformMergeAction("MERGE", classid or 0, seqName, v)
             else
                 GSE.AddSequenceToCollection(seqName, v)
             end
@@ -537,6 +590,16 @@ local function checkSeqStructure(classlibid, seqname, seq) -- luacheck: ignore c
         table.insert(issues, L["Missing MetaData table"])
         return issues
     end
+    -- Pre-#1853 schema detection. Auto-rename has been retired; this
+    -- record can't be processed until it goes through gse.tools and
+    -- comes back in the current shape. Specific-over-generic so the
+    -- user sees the actual remedy rather than "missing Macros table".
+    if seq.Macros ~= nil and seq.Versions == nil then
+        table.insert(issues, string.format(
+            L["Sequence '%s' is incompatible with the current version of GSE. Upload it to https://gse.tools to update it to the current format, then re-import."],
+            seqname))
+        return issues
+    end
     if type(seq.Versions) ~= "table" then
         table.insert(issues, L["Missing or invalid Macros table"])
         return issues
@@ -555,9 +618,24 @@ local function checkSeqStructure(classlibid, seqname, seq) -- luacheck: ignore c
         end
     end
 
-    -- Macros array analysis
+    -- Macros array analysis. Special-case the 0-indexed table — it has
+    -- versions but ipairs starts at 1, so editor/runtime see nothing.
+    -- Detect it BEFORE the generic "empty" message so the error log says
+    -- the actual problem (and FixSequenceStructure can recover them by
+    -- remapping 0→1 in step 4).
     local macIp, macNum, macMax = arrayStats(seq.Versions)
-    if macNum == 0 then
+    local hasZeroKey = seq.Versions[0] ~= nil
+    if hasZeroKey then
+        local zeroKeyed = 0
+        for k in pairs(seq.Versions) do
+            if type(k) == "number" and k == 0 then zeroKeyed = zeroKeyed + 1 end
+        end
+        table.insert(issues, string.format(
+            L["Versions starts at index 0 (Lua ipairs starts at 1 → editor and runtime see no versions). %d entr%s at index 0."],
+            zeroKeyed, zeroKeyed == 1 and "y" or "ies"))
+        -- Don't bail early — keep checking other structural issues so the
+        -- repair report covers everything in one pass.
+    elseif macNum == 0 then
         table.insert(issues, L["Macros array is empty (no versions defined)"])
         return issues
     end
@@ -1273,10 +1351,14 @@ function GSE.FixSequenceStructure(classlibid, seqname)
         GSE.Print(string.format(L["Cleared %d pending queue entries for '%s'."], removed, seqname))
     end
 
-    -- 2. Migrate pre-#1853 sequences that stored versions under "Macros" instead of "Versions".
-    if seq.Macros and not seq.Versions then
-        seq.Versions = seq.Macros
-        seq.Macros = nil
+    -- 2. Refuse to repair pre-#1853 records that still carry "Macros".
+    -- The auto-rename is retired; user must re-export through gse.tools
+    -- to get the current schema, then re-import.
+    if seq.Macros ~= nil and seq.Versions == nil then
+        GSE.Print(string.format(
+            L["Sequence '%s' is incompatible with the current version of GSE. Upload it to https://gse.tools to update it to the current format, then re-import."],
+            seqname), L["Import"])
+        return
     end
 
     -- 3. Replace Java-style // comment lines with -- in all action macro text
@@ -1286,11 +1368,16 @@ function GSE.FixSequenceStructure(classlibid, seqname)
         end
     end
 
-    -- 4. Re-index Macros array (compact gaps into a clean 1..n sequence)
+    -- 4. Re-index Macros array (compact gaps into a clean 1..n sequence).
+    -- Includes k == 0 deliberately: a Versions table that starts at [0]
+    -- (e.g. from a bad in-game merge or a CBOR round-trip that preserved
+    -- 0-based keys) is invisible to ipairs and reads as "no versions" in
+    -- the editor and runtime. The previous filter `k >= 1` would have
+    -- silently DROPPED such entries; mapping 0→1 instead recovers them.
     if type(seq.Versions) == "table" then
         local oldMacroKeys = {}
         for k in pairs(seq.Versions) do
-            if type(k) == "number" and k >= 1 then
+            if type(k) == "number" and k >= 0 then
                 table.insert(oldMacroKeys, k)
             end
         end
@@ -1511,6 +1598,14 @@ function GSE.PrintGnomeHelp()
                 ],
         GNOME
     )
+    GSE.Print(
+        L["The command "] ..
+            GSEOptions.CommandColour ..
+                L[
+                    "/gse clearincoming|r will abort any pending GSE Companion updates without importing them, and tell the Companion to prune them."
+                ],
+        GNOME
+    )
 end
 
 GSE:RegisterChatCommand("gse", "GSSlash")
@@ -1626,6 +1721,20 @@ function GSE:GSSlash(input)
         GSE.ReloadSequences()
     elseif string.lower(command) == "clearoocqueue" then
         GSE.OOCQueue = {}
+    elseif string.lower(command) == "clearincoming" then
+        local pending = GSE.IncomingQueue or {}
+        local count = #pending
+        if GSE.CompanionMarkImported then
+            for _, item in ipairs(pending) do
+                GSE.CompanionMarkImported(item)
+            end
+        end
+        GSE.IncomingQueue = {}
+        if GSE.GUIImportFrame then GSE.GUIImportFrame:Hide() end
+        GSE.Print(
+            "|cff00ccffGSE Companion:|r Cleared " .. count ..
+            " pending update(s) from the incoming queue."
+        )
     elseif string.lower(command) == "import" then
         GSE.CheckGUI()
         if GSE.UnsavedOptions["GUI"] then
