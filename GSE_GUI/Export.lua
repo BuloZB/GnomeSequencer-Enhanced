@@ -95,10 +95,21 @@ GSE.GUIAdvancedExport = function(exportframe, objectname, exportCategory)
                 sid = specid
             end
         end
-        SequenceDropDown:AddItem(v, v)
+        local seqElements = GSE.split(k, ",")
+        local seqClassId = tonumber(seqElements[1])
+        local seqName = seqElements[3]
+        GSE.EnsureSequenceLoaded(seqClassId, seqName)
+        local seqObj = GSE.Library[seqClassId] and GSE.Library[seqClassId][seqName]
+        if not (seqObj and seqObj.MetaData and seqObj.MetaData.noExport) then
+            SequenceDropDown:AddItem(v, v)
+        end
     end
     for k, _ in pairs(GSESequences[0]) do
-        SequenceDropDown:AddItem(k, k)
+        GSE.EnsureSequenceLoaded(0, k)
+        local globalSeq = GSE.Library[0] and GSE.Library[0][k]
+        if not (globalSeq and globalSeq.MetaData and globalSeq.MetaData.noExport) then
+            SequenceDropDown:AddItem(k, k)
+        end
     end
     SequenceDropDown:SetMultiselect(true)
     SequenceDropDown:SetLabel(L["Sequences"])
@@ -106,7 +117,10 @@ GSE.GUIAdvancedExport = function(exportframe, objectname, exportCategory)
     local VariableDropDown = AceGUI:Create("Dropdown")
     if not GSE.isEmpty(GSEVariables) then
         for k, _ in pairs(GSEVariables) do
-            VariableDropDown:AddItem(k, k)
+            local varOk, varDecoded = GSE.DecodeMessage(GSEVariables[k])
+            if varOk and not (varDecoded and varDecoded.MetaData and varDecoded.MetaData.noExport) then
+                VariableDropDown:AddItem(k, k)
+            end
         end
     end
 
