@@ -1189,11 +1189,13 @@ function GSE.UpdateIcon(self, reseticon)
             foundSpell = spellinfo.name
         end
     elseif executionseq[step].type == "spell" then
-        spellinfo = C_Spell.GetSpellInfo(GSE.UnEscapeString(executionseq[step].spell))
+        local spell = GSE.UnEscapeString(executionseq[step].spell)
+        local currentSpell = GSE.GetCurrentSpellID and GSE.GetCurrentSpellID(spell) or spell
+        spellinfo = C_Spell.GetSpellInfo(currentSpell)
         if spellinfo then
             foundSpell = spellinfo.name
         else
-            GSE.Print("Unable to find spell: " .. GSE.UnEscapeString(executionseq[step].spell) .. " from " .. self:GetName() .. " - Compiled Step " .. step)
+            GSE.Print("Unable to find spell: " .. tostring(spell) .. " from " .. self:GetName() .. " - Compiled Step " .. step)
         end
     end
     if executionseq[step].Icon then
@@ -1401,7 +1403,9 @@ local function buildAction(action, metaData, blockPath)
                 end
 
                 if k == "spell" then
-                    spelllist[k] = GSE.GetSpellId(value, Statics.TranslatorMode.String)
+                    spelllist[k] =
+                        GSE.GetSpellId(value, Statics.TranslatorMode.ID) or
+                        GSE.GetSpellId(value, Statics.TranslatorMode.String)
                 elseif k == "macro" then
                     if string.sub(GSE.UnEscapeString(value), 1, 1) == "/" then
                         -- we have a line of macrotext
@@ -1719,7 +1723,7 @@ local function PCallCreateGSE3Button(spelllist, name, combatReset)
         steps[k] = {}
         for i, j in pairs(v) do
             if i ~= "blockPath" then
-                line = i .. "\002" .. j
+                line = i .. "\002" .. tostring(j)
                 tinsert(steps[k], line)
             end
         end
@@ -1783,6 +1787,10 @@ for k,v in ipairs(compressedspelllist) do
             if sa then
                 local a = string.sub(j, 1, sa - 1)
                 local b = string.sub(j, ea + 1)
+                if a == "spell" then
+                    local numericSpell = tonumber(b)
+                    if numericSpell then b = numericSpell end
+                end
                 spelllist[k][x][a] = b
             end
         end
@@ -1944,10 +1952,100 @@ function GSE.UpdateVariable(variable, name, status)
     GSE:SendMessage(Statics.Messages.VARIABLE_UPDATED, name)
 end
 
+--- One-off backfill: ensure every sequence/variable/macro carries a
+-- top-level LastUpdated. Without it, the Companion uploads with no
+-- timestamp and the server's newer-wins gate can't compare. Older mod
+-- versions only stamped LastUpdated on edits — older never-edited
+-- records are missing it, and macros never had a timestamp at all
+-- before this release.
+--
+-- Idempotent: gated by GSEOptions.LastUpdatedBackfill_v1, runs once,
+-- writes only to entries where the field is missing. Safe to call from
+-- any post-load hook (we use PLAYER_ENTERING_WORLD).
+function GSE.BackfillLastUpdated()
+    if GSEOptions and GSEOptions.LastUpdatedBackfill_v1 then return end
+    local now = GSE.GetTimestamp()
+    local touched = 0
+
+    -- Sequences: GSE.Library[classid][name] is the in-memory shape;
+    -- GSESequences[classid][name] is the encoded SV blob. Re-encode
+    -- on stamp so the SV survives reload.
+    if GSE.Library then
+        for classid, classLib in pairs(GSE.Library) do
+            if type(classLib) == "table" then
+                for name, seq in pairs(classLib) do
+                    if type(seq) == "table" and not seq.LastUpdated then
+                        seq.LastUpdated = now
+                        if GSESequences and GSESequences[classid] then
+                            GSESequences[classid][name] = GSE.EncodeMessage({name, seq})
+                        end
+                        touched = touched + 1
+                    end
+                end
+            end
+        end
+    end
+
+    -- Variables: flat shape, GSEVariables[name] is the variable table.
+    if GSEVariables then
+        for _, v in pairs(GSEVariables) do
+            if type(v) == "table" and not v.LastUpdated then
+                v.LastUpdated = now
+                touched = touched + 1
+            end
+        end
+    end
+
+    -- Macros: GSEMacros has both global entries (GSEMacros[name]) and
+    -- character-scoped subtables (GSEMacros["char-realm"][name]). A
+    -- bucket vs node entry is distinguished by the presence of macro
+    -- node fields (text/value/managed) on the value itself.
+    if GSEMacros then
+        for _, scopeOrNode in pairs(GSEMacros) do
+            if type(scopeOrNode) == "table" then
+                local isNode = scopeOrNode.text ~= nil
+                    or scopeOrNode.value ~= nil
+                    or scopeOrNode.icon ~= nil
+                    or scopeOrNode.Managed ~= nil
+                if isNode then
+                    if not scopeOrNode.LastUpdated then
+                        scopeOrNode.LastUpdated = now
+                        touched = touched + 1
+                    end
+                else
+                    for _, node in pairs(scopeOrNode) do
+                        if type(node) == "table" and not node.LastUpdated then
+                            node.LastUpdated = now
+                            touched = touched + 1
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    if GSEOptions then
+        GSEOptions.LastUpdatedBackfill_v1 = true
+    end
+    if touched > 0 then
+        GSE.PrintDebugMessage(
+            string.format("LastUpdated backfill: stamped %d records", touched),
+            "Storage"
+        )
+    end
+end
+
 function GSE.UpdateMacro(node, category)
     -- Save-cancels-delete (see UpdateVariable for rationale).
     if node and node.name and GSE.CompanionCancelPendingDelete then
         GSE.CompanionCancelPendingDelete("macro", node.name)
+    end
+    -- Stamp LastUpdated so server-side newer-wins resolution can pick the
+    -- most-recently-edited copy when one Companion is syncing the same
+    -- macro across two WoW accounts. UTC-formatted via GetServerTime() so
+    -- it's comparable across timezones.
+    if node then
+        node.LastUpdated = GSE.GetTimestamp()
     end
     if not InCombatLockdown() then
         GSE:UnregisterEvent("UPDATE_MACROS")
