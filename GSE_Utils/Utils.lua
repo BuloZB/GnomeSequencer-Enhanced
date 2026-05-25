@@ -61,9 +61,17 @@ function GSE.OOCAddSequenceToCollection(sequenceName, sequence, classid)
     sequenceName = string.gsub(sequenceName, " ", "_")
     sequenceName = string.gsub(sequenceName, ",", "_")
 
-    -- check Sequence TOC matches the current TOC
+    -- check Sequence TOC matches the current TOC at expansion-major
+    -- resolution. TOCs are XXYYZZ (XX = expansion, YY = patch, ZZ = build);
+    -- a sequence stamped 120001 and a client running 120005 are both
+    -- Midnight and shouldn't warn. Only flag when the expansion itself
+    -- differs (e.g. a Midnight sequence loaded on TWW) or when the stored
+    -- TOC is empty.
     local gameversion, build, date, tocversion = GetBuildInfo()
-    if GSE.isEmpty(sequence.MetaData.TOC) or sequence.MetaData.TOC ~= tocversion then
+    local seqTOC = tonumber(sequence.MetaData.TOC)
+    local seqExp = seqTOC and math.floor(seqTOC / 10000) or nil
+    local clientExp = tocversion and math.floor(tonumber(tocversion) / 10000) or nil
+    if GSE.isEmpty(sequence.MetaData.TOC) or seqExp ~= clientExp then
         GSE.Print(
             string.format(
                 L["WARNING ONLY"] ..
@@ -221,7 +229,7 @@ function GSE.CreateMacroIcon(sequenceName, icon, forceglobalstub)
                                 GSEOptions.EmphasisColour ..
                                     numCharacterMacros ..
                                         L[
-                                            "|r.  As a result this macro was not created.  Please delete some macros and reenter "
+                                            "|r. As a result this macro was not created.  Please delete some macros and reenter "
                                         ] ..
                                             GSEOptions.CommandColour .. L["/gse|r again."],
                 GNOME
@@ -1717,7 +1725,7 @@ function GSE.PrintGnomeHelp()
         L["The command "] ..
             GSEOptions.CommandColour ..
                 L[
-                    "/gse showspec|r will show your current Specialisation and the SPECID needed to tag any existing macros."
+                    "/gse showspec|r will show your current Specialisation and the SPECID needed to tag any existing sequences."
                 ],
         GNOME
     )
@@ -1978,8 +1986,19 @@ do
     local function gseEmptyButtonHandler(self, mousebutton, down)
         if not GSEOptions.actionBarOverridePopup then return end
         if InCombatLockdown() then return end
-        if not down then return end
         if mousebutton ~= "RightButton" then return end
+        -- Fire exactly once per right-click regardless of how the button
+        -- registered for clicks. Blizzard buttons register AnyDown+AnyUp
+        -- (OnClick fires down then up); EllesmereUI's EABButtons register
+        -- AnyUp only when ActionButtonUseKeyDown is off (which GSE's
+        -- Actionbar Overrides require) -- so the old `if not down` guard
+        -- silently dropped every EABButton right-click.
+        if down then
+            self._gseABMenuDown = true
+        elseif self._gseABMenuDown then
+            self._gseABMenuDown = nil
+            return
+        end
 
         local existingSequence = self:GetAttribute("gse-button")
 
@@ -2103,6 +2122,15 @@ do
                     local btn = _G["NDui_ActionBar" .. bar .. "Button" .. slot]
                     if btn then btn:HookScript("OnClick", gseEmptyButtonHandler) end
                 end
+            end
+        end
+
+        -- EllesmereUI action bars: custom EABButton1..180 frames. Hook them
+        -- like any other custom bar so the right-click assign menu appears.
+        if _G["EABButton1"] then
+            for i = 1, 180 do
+                local btn = _G["EABButton" .. i]
+                if btn then btn:HookScript("OnClick", gseEmptyButtonHandler) end
             end
         end
 

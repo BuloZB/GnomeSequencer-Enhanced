@@ -437,6 +437,18 @@ local function hookActionButtonUpdate()
     end)
 end
 
+-- EllesmereUI routes action-bar keybinds to native engine commands via
+-- SetOverrideBinding (anchored to Blizzard's hidden original buttons), not
+-- to clicking the visible EABButton frame -- so without help the keypress
+-- never reaches the EABButton and its GSE override.  This owner frame
+-- carries SetOverrideBindingClick bindings that route the slot's key to
+-- *click the EABButton frame*, so the keypress goes through the same
+-- type-attribute state machine (BAR_SWAP_OAC / BAR_SWAP_ONCLICK) as a mouse
+-- click -- and therefore releases to the bar during vehicle / skyriding /
+-- override-bar states, exactly like a Blizzard button.  Cleared + reapplied
+-- as a unit by LoadOverrides.
+local GSE_EABBindOwner = CreateFrame("Frame", "GSE_EABBindOwner", UIParent)
+
 local function overrideActionButton(savedBind, force)
     if GSE.isEmpty(GSE.ButtonOverrides) then
         GSE.ButtonOverrides = {}
@@ -452,6 +464,27 @@ local function overrideActionButton(savedBind, force)
         string.sub(Button, 1, 4) == "NDui_" and "2" or
         "1"
     _G[Button]:SetAttribute("gse-button", Sequence)
+    -- EllesmereUI keybinds bypass the EABButton frame (see GSE_EABBindOwner
+    -- above): bind the slot's key(s) to *click the EABButton frame* -- NOT
+    -- straight to the GSE sequence button.  Routing through the frame means
+    -- the keypress obeys the button's type attribute, which BAR_SWAP_OAC /
+    -- BAR_SWAP_ONCLICK flip to "action" during vehicle/skyriding/override-bar
+    -- states -- so the key releases to the bar just like a mouse click.
+    -- isPriority=true so this wins over EllesmereUI's own (non-priority)
+    -- SetOverrideBinding for the same key.
+    if string.sub(Button, 1, 9) == "EABButton" and not InCombatLockdown() then
+        local cmd = _G[Button].commandName
+        if cmd then
+            local k1, k2 = GetBindingKey(cmd)
+            if k1 then SetOverrideBindingClick(GSE_EABBindOwner, true, k1, Button) end
+            if k2 then SetOverrideBindingClick(GSE_EABBindOwner, true, k2, Button) end
+        else
+            GSE.PrintDebugMessage(
+                "EllesmereUI button " .. Button .. " has no commandName; keybind override not applied",
+                "EVENTS"
+            )
+        end
+    end
     if string.sub(Button, 1, 7) == "Dominos" or string.sub(Button, 1, 11) == "ButtonForge" then
         -- Dominos and ButtonForge use ActionBarButtonTemplate / SecureActionButtonTemplate;
         -- action slot is a secure attribute only, not a page/slot hierarchy.
@@ -637,6 +670,9 @@ local function LoadOverrides(force)
         ensureActionBarCVars()
     end
     if not InCombatLockdown() then
+        -- Drop all EllesmereUI keybind overrides; the reapply loop below
+        -- re-adds them for overrides that are still active.
+        ClearOverrideBindings(GSE_EABBindOwner)
         for k, _ in pairs(GSE.ButtonOverrides) do
             -- revert all buttons
             if string.sub(k, 1, 5) == "ElvUI" or string.sub(k, 1, 4) == "CPB_" or string.sub(k, 1, 3) == "BT4" then
@@ -1142,6 +1178,20 @@ function GSE.StopOOCTimer()
     GSE.OOCTimer = nil
 end
 
+--- True while a boss encounter is in progress. Prefers the 12.0 (Midnight)
+--- C_InstanceEncounter namespace; falls back to the long-standing global,
+--- which is present on every flavour GSE ships for, so classic builds still
+--- get the gate.
+function GSE.IsEncounterInProgress()
+    if C_InstanceEncounter and C_InstanceEncounter.IsEncounterInProgress then
+        return C_InstanceEncounter.IsEncounterInProgress()
+    end
+    if IsEncounterInProgress then
+        return IsEncounterInProgress()
+    end
+    return false
+end
+
 function GSE:ProcessOOCQueue()
     -- check ZONE_CHANGED_NEW_AREA issues
     if GSE.currentZone ~= GetRealZoneText() then
@@ -1152,10 +1202,19 @@ function GSE:ProcessOOCQueue()
     -- new table, and combat-blocked items are re-inserted cleanly with no holes.
     local queue = GSE.OOCQueue
     GSE.OOCQueue = {}
+    -- A boss encounter can briefly drop combat (InCombatLockdown goes false)
+    -- mid-fight. Recompiling the button in that window rebuilds the macro
+    -- under the player mid-encounter, so an UpdateSequence dequeued while an
+    -- encounter is in progress is re-queued to wait the encounter out.
+    local encounterInProgress = GSE.IsEncounterInProgress()
     for _, v in ipairs(queue) do
         if not InCombatLockdown() then
             if v.action == "UpdateSequence" then
-                GSE.OOCUpdateSequence(v.name, v.macroversion)
+                if encounterInProgress then
+                    table.insert(GSE.OOCQueue, v)
+                else
+                    GSE.OOCUpdateSequence(v.name, v.macroversion)
+                end
             elseif v.action == "Save" then
                 GSE.OOCAddSequenceToCollection(v.sequencename, v.sequence, v.classid)
             elseif v.action == "Replace" then
