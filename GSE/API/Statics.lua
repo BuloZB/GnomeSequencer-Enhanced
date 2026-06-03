@@ -473,26 +473,14 @@ Statics.Icons.Logo = "Interface\\Addons\\GSE_GUI\\Assets\\GSE_512x512-Transparen
 Statics.Icons.Discord = "Interface\\Addons\\GSE_GUI\\Assets\\discord.png"
 Statics.Icons.Github = "Interface\\Addons\\GSE_GUI\\Assets\\github.png"
 Statics.Icons.Patreon = "Interface\\Addons\\GSE_GUI\\Assets\\patreon.png"
-Statics.Icons.MenuLogo = "Interface/AddOns/GSE_GUI/Assets/GSE_Menu_Logo.png"
+Statics.Icons.MenuLogo = "Interface/AddOns/GSE_GUI/Assets/GSE_512x512-Transparent.png"
 Statics.Icons.Export = 4419478
 Statics.Icons.Button = "Interface/AddOns/GSE_GUI/Assets/ActionORide.png"
 Statics.Icons.Account = 133784
 Statics.Icons.Personal = 236448
 Statics.Icons.Talents = 134327
-Statics.Icons.GSE_Logo_Dark = "Interface\\Addons\\GSE_GUI\\Assets\\GSE_Logo_Dark_512.blp"
-Statics.GSE3OnClick =
-    [=[
-local step = self:GetAttribute('step')
-step = tonumber(step)
-self:SetAttribute('macrotext', macros[step] )
-step = step % #macros + 1
-if not step or not macros[step] then -- User attempted to write a step method that doesn't work, reset to 1
-	print('|cffff0000Invalid step assigned by custom step sequence', self:GetName(), step or 'nil', '|r')
-	step = 1
-end
-self:SetAttribute('step', step)
-self:CallMethod('UpdateIcon')
-]=]
+Statics.Icons.GSE_Logo_Dark = "Interface\\Addons\\GSE_GUI\\Assets\\GSE_512x512-Transparent.png"
+
 
 Statics.TranslatorMode = {}
 Statics.TranslatorMode.Current = "CURRENT"
