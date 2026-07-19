@@ -1,13 +1,16 @@
-local GSE = GSE
+local _, ns = ...
+ns.deferred = ns.deferred or {}
+
+local function setup()
+local GSE = ns.GSE
 local Statics = GSE.Static
-local AceGUI = LibStub("AceGUI-3.0")
-local L = GSE.L
+local UI = GSE.UI
 
 -- Initialise GUI namespace
 if GSE.isEmpty(GSE.GUI) then GSE.GUI = {} end
 
 --- Attach tooltip OnEnter/OnLeave callbacks to a widget.
--- @param widget  AceGUI widget
+-- @param widget  GSE.UI widget
 -- @param title   string  Tooltip title
 -- @param text    string  Tooltip body
 -- @param editframe  the editor frame (for GSE.CreateToolTip / ClearTooltip)
@@ -29,10 +32,10 @@ end
 -- @param title     string  tooltip title (optional)
 -- @param text      string  tooltip body (optional)
 -- @param editframe  (optional, needed for tooltip)
--- @return AceGUI InteractiveLabel widget
+-- @return GSE.UI InteractiveLabel widget
 function GSE.GUI.MakeIconButton(iconPath, size, onClick, title, text, editframe)
     size = size or 20
-    local btn = AceGUI:Create("InteractiveLabel")
+    local btn = UI:Create("InteractiveLabel")
     btn:SetImageSize(size, size)
     btn:SetImage(iconPath)
     btn:SetCallback("OnClick", onClick)
@@ -60,10 +63,5 @@ end
 function GSE.GUI.PathUtils.child(path, key)
     return path .. "\001" .. tostring(key)
 end
-
---- Feature flag helpers — centralise patron/developer guards.
-GSE.GUI.Feature = {
-    RAW_EDIT     = function() return GSE.Patron or GSE.Developer end,
-    MULTI_WINDOW = function() return GSE.Patron end,
-    TAB_COMPLETE = function() return GSE.Patron end,
-}
+end
+table.insert(ns.deferred, setup)

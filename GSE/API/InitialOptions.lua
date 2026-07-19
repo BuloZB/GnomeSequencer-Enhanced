@@ -1,7 +1,9 @@
-local GSE = GSE
+local _, GSE = ...
 local Statics = GSE.Static
-GSE.DebugProfile("End Patrons")
+if type(GSE.DebugProfile) == "function" then GSE.DebugProfile("End Patrons") end
 -- These are overridden when the saved variables are loaded in
+
+local MODERN_CUSTOM_COLOR_DEFAULT = {r = 0.00, g = 0.44, b = 0.87}
 
 function GSE.resetMacroResetModifiers()
     GSEOptions.MacroResetModifiers = {}
@@ -48,11 +50,20 @@ function GSE.SetDefaultOptions()
     GSEOptions.STANDARDFUNCS = "|cff55ddcc"
     GSEOptions.WOWSHORTCUTS = "|cffddaaff"
     GSEOptions.overflowPersonalMacros = false
+    -- Editor spell translation; see GSE.ShouldTranslateLive(). false (default) =
+    -- translate/colour live as you type while editing; true = always defer to
+    -- focus-loss, to reduce editor lag on older machines. Exposed as the "Delayed
+    -- Spell Translations" checkbox under Options > Tools & Diagnostics. Read live
+    -- by the editor, so no reload is needed.
+    GSEOptions.DelayedSpellTranslations = false
+    -- Legacy flag for the old AceGUI parser (GSE.GUIParseText); superseded by
+    -- DelayedSpellTranslations above and otherwise unused.
     GSEOptions.RealtimeParse = false
     GSEOptions.ActiveSequenceVersions = {}
     GSEOptions.DisabledSequences = {}
     GSEOptions.DebugModules = {}
     GSEOptions.shownew = true
+    if GSEOptions.ToolbarEnabled == nil then GSEOptions.ToolbarEnabled = true end
 
     GSEOptions.DebugModules[Statics.DebugModules["Translator"]] = false
     GSEOptions.DebugModules[Statics.DebugModules["Editor"]] = false
@@ -87,13 +98,46 @@ function GSE.SetDefaultOptions()
         hide = true
     }
     GSEOptions.showCurrentSpells = true
+    -- FocusHighlightTint: master toggle for the 10%-opacity rail-color fill
+    -- on the currently-focused block. When false, only the proc-pulsed
+    -- border lines remain; when true, the block's empty areas (outside the
+    -- macro edit box, which has its own opaque backdrop) get a soft tint
+    -- in the rail color. Independent from FocusHighProc / Brightness — the
+    -- tint is constant, not animated.
+    GSEOptions.FocusHighlightTint = true
+    -- FocusHighProc: proc-style animation TYPE on the four border lines around
+    -- the focused Loop/Action block in the editor. Each type bakes its own
+    -- alpha range, cycle duration and smoothing curve so users can pick a
+    -- distinct visual feel rather than just an intensity. Valid values:
+    -- "OFF", "PULSE" (default, matches the original baseline pulse),
+    -- "FLASH" (sharp fast), "THROB" (slow heavy), "BREATHE" (slow gentle),
+    -- "STROBE" (very fast). Border colors are hard-coded per action type and
+    -- are NOT changed by this option.
+    GSEOptions.FocusHighProc = "PULSE"
+    -- FocusHighProcBrightness: dimming intensity modifier applied on top of
+    -- whichever proc TYPE is selected above. Shifts the low-alpha bound of
+    -- the animation — LOW raises it (subtler swing), MEDIUM uses the type's
+    -- baseline, HIGH lowers it (more dramatic swing). Final low alpha is
+    -- clamped to [0.05, 0.95] so no combination can render the border fully
+    -- invisible or freeze it solid. Valid values: "LOW", "MEDIUM" (default),
+    -- "HIGH". Has no effect when FocusHighProc is "OFF".
+    GSEOptions.FocusHighProcBrightness = "MEDIUM"
     GSEOptions.OOCQueueDelay = 7
     GSE.resetMacroResetModifiers()
     GSEOptions.frameLocations = {
-        sequenceeditor = {height = 500, width = 700, treeWidth = 150}
+        sequenceeditor = {height = 800, width = 800, treeWidth = 165}
     }
-    GSEOptions.Multiclick = true
     GSEOptions.SyncWoWMacros = false
+    -- Skin selection: GSEOptions.SkinMode ("NATIVE"/"MODERN"/"ADDON"); the
+    -- default is AUTO, represented by leaving it unset (nil). See the migration
+    -- below and GSE_Utils/Appearance.lua:GSE.GetEffectiveSkinMode.
+    GSEOptions.UseModernClassColors = false
+    GSEOptions.UseModernCustomColor = false
+    GSEOptions.ModernCustomColor = {
+        r = MODERN_CUSTOM_COLOR_DEFAULT.r,
+        g = MODERN_CUSTOM_COLOR_DEFAULT.g,
+        b = MODERN_CUSTOM_COLOR_DEFAULT.b
+    }
     -- Modifier-held "pause" toggles. When enabled, holding the matching
     -- modifier while pressing the GSE sequence button sends an empty
     -- macro and does NOT advance the step — letting the user stall the
@@ -110,6 +154,71 @@ end
 if not GSEOptions.DebugModules then
     GSE.SetDefaultOptions()
 end
+
+-- Developer Debug is a developer-only facility. Its toggles (Enable Mod Debug
+-- Mode, the chat/store debug-output options and per-module debug) live in a
+-- Settings subcategory that is only built when GSE.Developer is set -- and that
+-- flag is set ONLY by the version-string check in Init.lua (unpackaged dev
+-- checkout). A normal user therefore has no UI to turn any of these on, so a
+-- persisted debug flag can only be a leftover from a prior developer/Patron
+-- build. Left alone it spams heavy logging and nags the GameMenu "Developer
+-- Debug settings are active" warning. Force the whole set off on every load
+-- unless this build is genuinely a developer build.
+if not GSE.Developer then
+    GSEOptions.debug = false
+    GSEOptions.sendDebugOutputToChatWindow = false
+    GSEOptions.sendDebugOutputToDebugOutput = false
+    if type(GSEOptions.DebugModules) == "table" then
+        for moduleName in pairs(GSEOptions.DebugModules) do
+            GSEOptions.DebugModules[moduleName] = false
+        end
+    end
+end
+
+-- Skin selection migration. The old boolean GSEOptions.UseModernSkin (and the
+-- even older GSEOptions.UseElvUISkin before it) is superseded by the tri-state
+-- GSEOptions.SkinMode ("NATIVE" / "MODERN" / "ADDON"; nil = AUTO = installed UI
+-- addon skin if present, else native). Resolution lives in
+-- GSE_Utils/Appearance.lua:GSE.GetEffectiveSkinMode.
+if GSEOptions.SkinMode == nil then
+    if GSEOptions.UseModernSkin == true then
+        -- Preserve users who had explicitly enabled the Modern skin.
+        GSEOptions.SkinMode = "MODERN"
+    end
+    -- UseModernSkin false/nil (and the legacy UseElvUISkin path) leaves SkinMode
+    -- nil = AUTO, which keeps "installed provider wins if present" behaviour.
+end
+
+if GSEOptions.UseModernClassColors == nil then
+    GSEOptions.UseModernClassColors = false
+end
+
+if GSEOptions.UseModernCustomColor == nil then
+    GSEOptions.UseModernCustomColor = false
+end
+
+if GSEOptions.UseModernCustomColor == true then
+    GSEOptions.UseModernClassColors = false
+end
+
+if type(GSEOptions.ModernCustomColor) ~= "table" then
+    GSEOptions.ModernCustomColor = {
+        r = MODERN_CUSTOM_COLOR_DEFAULT.r,
+        g = MODERN_CUSTOM_COLOR_DEFAULT.g,
+        b = MODERN_CUSTOM_COLOR_DEFAULT.b
+    }
+end
+
+-- NOTE: The skin accessors (GSE.ShouldUseModernSkin / ShouldUseModernClassColors
+-- / ShouldUseModernCustomColor / GetModernCustomColor / SetModernCustomColor /
+-- ShouldUseElvUISkin) and the entire UI-scale + frame-positioning subsystem
+-- (GSE.GetUIScale / SetUIScale / GetMenuUIScale / SetMenuUIScale /
+-- ApplyScaleToFrame / ApplyMenuScaleToFrame / RegisterUIScaleFrame /
+-- RegisterMenuUIScaleFrame / ApplyUIScale / ApplyMenuUIScale /
+-- SetFrameScreenPoint / ClampFrameToScreen) used to live here. They are
+-- front-end only -- the macro engine never calls them -- so they now live in
+-- GSE_Utils/Appearance.lua, the lowest shared front-end addon. Core retains only
+-- the saved-variable defaults + migration above.
 
 -- Migrate editor dimensions from old flat keys to frameLocations.sequenceeditor.
 do
@@ -134,9 +243,12 @@ do
     end
     -- Ensure defaults are always stored explicitly so the sliders always
     -- reflect a real saved value rather than a scattered fallback.
-    if GSE.isEmpty(se.height)    then se.height    = 500 end
-    if GSE.isEmpty(se.width)     then se.width     = 700 end
-    if GSE.isEmpty(se.treeWidth) then se.treeWidth = 150 end
+    if GSE.isEmpty(se.height)    then se.height    = 800 end
+    if GSE.isEmpty(se.width)     then se.width     = 800 end
+    if se.width < 800 then se.width = 800 end
+    if GSE.isEmpty(se.treeWidth) then se.treeWidth = 165 end
+    if se.treeWidth < 165 then se.treeWidth = 165 end
+    if se.treeWidth > 300 then se.treeWidth = 300 end
 end
 
 GSE.OOCQueue = {}
@@ -158,4 +270,52 @@ GSE.SequencesExec = {}
 GSE.UnsavedOptions["PartyUsers"] = {}
 GSE.UnsavedOptions["GUI"] = false
 
-GSE.DebugProfile("InitialOptions")
+if type(GSE.DebugProfile) == "function" then GSE.DebugProfile("InitialOptions") end
+
+
+-- ── Debugger UI Scale ────────────────────────────────────────────────────────
+local GSE_DEBUGGER_SCALE_DEFAULT = 1
+local GSE_DEBUGGER_SCALE_MIN     = 0.5
+local GSE_DEBUGGER_SCALE_MAX     = 2.0
+local GSE_DEBUGGER_SCALE_ROUND   = 100
+
+local function ClampDebugScale(value)
+    value = tonumber(value) or GSE_DEBUGGER_SCALE_DEFAULT
+    if value < GSE_DEBUGGER_SCALE_MIN then value = GSE_DEBUGGER_SCALE_MIN end
+    if value > GSE_DEBUGGER_SCALE_MAX then value = GSE_DEBUGGER_SCALE_MAX end
+    return math.floor((value * GSE_DEBUGGER_SCALE_ROUND) + 0.5) / GSE_DEBUGGER_SCALE_ROUND
+end
+
+function GSE.GetDebugUIScale()
+    return ClampDebugScale(GSEOptions and GSEOptions.debugUIScale)
+end
+
+function GSE.SetDebugUIScale(value)
+    if not GSEOptions then GSEOptions = {} end
+    GSEOptions.debugUIScale = ClampDebugScale(value)
+    if GSE.ApplyDebugUIScale then GSE.ApplyDebugUIScale() end
+end
+
+function GSE.ApplyDebugScaleToFrame(frame)
+    if not (frame and frame.SetScale) then return end
+    frame:SetScale(ClampDebugScale(GSE.GetDebugUIScale()))
+end
+
+function GSE.RegisterDebugUIScaleFrame(frame)
+    if not frame then return end
+    GSE.DebugUIScaleFrames = GSE.DebugUIScaleFrames or setmetatable({}, {__mode = "k"})
+    GSE.DebugUIScaleFrames[frame] = true
+    GSE.ApplyDebugScaleToFrame(frame)
+end
+
+function GSE.ApplyDebugUIScale()
+    if GSE.DebugUIScaleFrames then
+        for frame in pairs(GSE.DebugUIScaleFrames) do
+            if frame and frame.SetScale then
+                GSE.ApplyDebugScaleToFrame(frame)
+            else
+                GSE.DebugUIScaleFrames[frame] = nil
+            end
+        end
+    end
+end

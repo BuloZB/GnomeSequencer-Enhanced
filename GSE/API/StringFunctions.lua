@@ -1,4 +1,4 @@
-local GSE = GSE
+local _, GSE = ...
 local Statics = GSE.Static
 
 --- Remove WoW Text Markup from a sequence.  Deprecated Use GSE.UnEscapeTableRecursive
@@ -92,9 +92,23 @@ function GSE.DecodeMacroEditorText(text)
     return text
 end
 
+--- Count macro editor text while ignoring full Lua-style note lines.
+function GSE.GetMacroEditorTextLength(text)
+    text = GSE.DecodeMacroEditorText(text)
+    if type(text) ~= "string" or text == "" then return 0 end
+
+    local countedLines = {}
+    for line in (text .. "\n"):gmatch("(.-)\r?\n") do
+        if not line:match("^%s*%-%-") then
+            table.insert(countedLines, line)
+        end
+    end
+    return string.len(table.concat(countedLines, "\n"))
+end
 function GSE.StoreMacroEditorText(text, mode)
     text = GSE.DecodeMacroEditorText(text)
-    if type(text) == "string" and string.sub(text, 1, 1) == "/" and GSE.CompileMacroText then
+    if type(text) ~= "string" then return "" end
+    if string.sub(text, 1, 1) == "/" and GSE.CompileMacroText then
         text = GSE.DecodeMacroEditorText(GSE.CompileMacroText(text, mode or Statics.TranslatorMode.ID))
     end
     return text
@@ -139,6 +153,7 @@ end
 
 --- Add the lines of a string as individual entries.
 function GSE.lines(tab, str)
+    if type(str) ~= "string" then str = str and tostring(str) or "" end
     local function helper(line)
         table.insert(tab, line)
         return ""
@@ -150,9 +165,15 @@ end
 function GSE.SplitMeIntoLines(str)
     --GSE.PrintDebugMessage("Entering GSTRSplitMeIntoLines with : \n" .. str, GNOME)
     local t = {}
+    if type(str) ~= "string" then
+        if str == nil then return t end
+        str = tostring(str)
+    end
     local function helper(line)
         table.insert(t, line)
+        --@debug@
         GSE.PrintDebugMessage("Line : " .. line, Statics.GSEString)
+        --@end-debug@
         return ""
     end
     helper((str:gsub("(.-)\r?\n", helper)))
@@ -165,18 +186,26 @@ function GSE.SplitCastSequence(str)
     local slen = string.len(str)
     local modblock = false
     local start = 1
+    --@debug@
     GSE.PrintDebugMessage(slen, "Storage")
+    --@end-debug@
     for i = 1, slen, 1 do
         if string.sub(str, i, i) == "[" then
             modblock = true
+            --@debug@
             GSE.PrintDebugMessage("in mod at " .. i, "Storage")
+            --@end-debug@
         elseif string.sub(str, i, i) == "]" then
             modblock = false
+            --@debug@
             GSE.PrintDebugMessage("leaving mod at " .. i, "Storage")
+            --@end-debug@
         elseif string.sub(str, i, i) == "," and not modblock then
             table.insert(tab, string.sub(str, start, i - 1))
             start = i + 1
+            --@debug@
             GSE.PrintDebugMessage("found terminator at " .. i, "Storage")
+            --@end-debug@
         end
     end
     table.insert(tab, string.sub(str, start))

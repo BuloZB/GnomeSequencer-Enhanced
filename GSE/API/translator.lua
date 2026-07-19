@@ -1,9 +1,8 @@
-local GSE = GSE
+local _, GSE = ...
 local Statics = GSE.Static
 
 local GNOME = Statics.DebugModules["Translator"]
 
-local L = GSE.L
 
 local function normaliseSpellIDValue(value)
     if type(value) == "table" then
@@ -49,23 +48,33 @@ local function findCurrentSpellID(spellID)
 end
 
 local function getSpellInfoID(spell)
-    if GSE.isEmpty(spell) or not C_Spell or not C_Spell.GetSpellInfo then
+    if GSE.isEmpty(spell) then
         return nil
     end
 
-    local ok, spellinfo = pcall(C_Spell.GetSpellInfo, spell)
-    if ok and spellinfo then
+    local spellinfo = GSE.GetSpellInfo(spell)
+    if spellinfo then
         return normaliseSpellIDValue(spellinfo.spellID)
     end
 end
 
 local function spellIDIsInSpellBook(spellID)
-    if not C_SpellBook or not C_SpellBook.FindSpellBookSlotForSpell then
+    -- TBC Classic Anniversary + MoP Classic expose C_SpellBook but not
+    -- FindSpellBookSlotForSpell (Retail-only). The unguarded call there
+    -- threw `attempt to call a nil value` every CompileMacroText pass —
+    -- ~179 spam errors per Notes save in issue #1925. Mirror the
+    -- defensive pattern used by findBaseSpellID / findCurrentSpellID
+    -- above: prefer C_SpellBook.X, fall back to the legacy top-level
+    -- global, and default to true ("treat as in book") when neither
+    -- exists. That matches the nil-slot path on Retail, where an
+    -- unresolved slot is also reported as in-book by this function.
+    local FindSlot = (C_SpellBook and C_SpellBook.FindSpellBookSlotForSpell)
+        or FindSpellBookSlotForSpell
+    if not FindSlot then
         return true
     end
-
-    local ok, slot = pcall(C_SpellBook.FindSpellBookSlotForSpell, spellID)
-    return ok and slot and slot > 0
+    local slot = FindSlot(spellID)
+    return slot == nil or slot > 0
 end
 
 local function canCacheSpellLookup(spellstring, spellID, rawSpellID)
@@ -109,7 +118,9 @@ end
 -- Mode of "STRING" will return local names where mode "ID" will return id's
 -- dropAbsolute will remove "$$" from the start of lines.
 function GSE.TranslateSequence(tab, mode, dropAbsolute)
+    --@debug@
     GSE.PrintDebugMessage("GSE.TranslateSequence  Mode: " .. mode, GNOME)
+    --@end-debug@
     for k, v in ipairs(tab) do
         -- Translate Sequence
         if type(v) == "table" then
@@ -129,8 +140,9 @@ function GSE.TranslateSequence(tab, mode, dropAbsolute)
     return tab
 end
 
-function GSE.TranslateString(instring, mode, cleanNewLines, dropAbsolute)
+local function translateStringUncached(instring, mode, cleanNewLines, dropAbsolute)
     instring = GSE.UnEscapeString(instring)
+    if type(instring) ~= "string" then return instring and tostring(instring) or "" end
     local lines = GSE.SplitMeIntoLines(instring)
     if #lines > 1 then
         local output = {}
@@ -139,23 +151,31 @@ function GSE.TranslateString(instring, mode, cleanNewLines, dropAbsolute)
         end
         return table.concat(output, "\n")
     else
+        --@debug@
         GSE.PrintDebugMessage("Entering GSE.TranslateString with : \n" .. instring .. "\n " .. mode, GNOME)
+        --@end-debug@
         local output = ""
         if not GSE.isEmpty(instring) then
             local absolute = false
             if instring:find("$$", 1, true) then
+                --@debug@
                 GSE.PrintDebugMessage("Setting Absolute", GNOME)
+                --@end-debug@
                 absolute = true
                 output = string.gsub(instring, "%$%$", "")
             elseif GSE.isEmpty(string.find(instring, "--", 1, true)) then
                 for cmd, etc in string.gmatch(instring or "", "/(%w+)%s+([^\n]+)") do
+                    --@debug@
                     GSE.PrintDebugMessage("cmd : \n" .. cmd .. " etc: " .. etc, GNOME)
+                    --@end-debug@
                     output = output .. GSEOptions.WOWSHORTCUTS .. "/" .. cmd .. Statics.StringReset .. " "
                     if string.lower(cmd) == "use" then
                         local conditionals, mods, trinketstuff = GSE.GetConditionalsFromString(etc)
                         if conditionals then
                             output = output .. mods .. " "
+                            --@debug@
                             GSE.PrintDebugMessage("GSE.TranslateSpell conditionals found ", GNOME)
+                            --@end-debug@
                         end
                         if tonumber(trinketstuff) and tonumber(trinketstuff) < 17 then
                             output = output .. GSEOptions.KEYWORD .. trinketstuff .. Statics.StringReset
@@ -172,12 +192,16 @@ function GSE.TranslateString(instring, mode, cleanNewLines, dropAbsolute)
                             if foundspell then
                                 output = output .. returnval
                             else
+                                --@debug@
                                 GSE.PrintDebugMessage("Did not find : " .. trinketstuff, GNOME)
+                                --@end-debug@
                                 output = output .. trinketstuff
                             end
                         end
                     elseif string.lower(cmd) == "castsequence" then
+                        --@debug@
                         GSE.PrintDebugMessage("attempting to split : " .. etc, GNOME)
+                        --@end-debug@
                         for _, y in ipairs(GSE.split(etc, ";")) do
                             for _, w in ipairs(GSE.SplitCastSequence(y)) do
                                 -- Look for conditionals at the startattack
@@ -210,11 +234,11 @@ function GSE.TranslateString(instring, mode, cleanNewLines, dropAbsolute)
                         if not GSE.isEmpty(trimRight) then
                             etc = string.sub(etc, 1, trimRight - 1)
                         end
-                        if mode == Statics.TranslatorMode.String then
-                            if tonumber(GetCVar("ActionButtonUseKeyDown")) == 1 then
-                                etc = etc .. " LeftButton t"
-                            end
-                        end
+                        -- Always emit a bare `/click NAME` (down=false). GSE
+                        -- sequence buttons now pin useOnKeyDown=false, so a
+                        -- key-DOWN forward (`LeftButton t`) would no longer match
+                        -- the executor's cast edge. Bare /click resolves on the
+                        -- up edge under both ActionButtonUseKeyDown states.
                         output = output .. " " .. etc
                     elseif Statics.CastCmds[string.lower(cmd)] then
                         -- Check for cast Sequences
@@ -230,7 +254,9 @@ function GSE.TranslateString(instring, mode, cleanNewLines, dropAbsolute)
                         if foundspell then
                             output = output .. returnval
                         else
+                            --@debug@
                             GSE.PrintDebugMessage("Did not find : " .. etc, GNOME)
+                            --@end-debug@
                             output = output .. etc
                         end
                     else
@@ -248,7 +274,9 @@ function GSE.TranslateString(instring, mode, cleanNewLines, dropAbsolute)
                     )
                 end
             else
+                --@debug@
                 GSE.PrintDebugMessage("Detected Comment " .. string.find(instring, "--", 1, true), GNOME)
+                --@end-debug@
                 output = output .. GSEOptions.CONCAT .. instring .. Statics.StringReset
             end
             -- If nothing was found, pass through
@@ -274,7 +302,9 @@ function GSE.TranslateString(instring, mode, cleanNewLines, dropAbsolute)
         elseif cleanNewLines then
             output = output .. instring
         end
+        --@debug@
         GSE.PrintDebugMessage("Exiting GSE.TranslateString with : \n" .. output, GNOME)
+        --@end-debug@
         -- Check for random "," at the end
         if string.sub(output, string.len(output) - 1) == ", " then
             output = string.sub(output, 1, string.len(output) - 2)
@@ -286,6 +316,26 @@ function GSE.TranslateString(instring, mode, cleanNewLines, dropAbsolute)
     end
 end
 
+local translateCache = {}
+function GSE.ClearTranslateStringCache()
+    translateCache = {}
+end
+
+function GSE.TranslateString(instring, mode, cleanNewLines, dropAbsolute)
+    if type(instring) ~= "string" then
+        return translateStringUncached(instring, mode, cleanNewLines, dropAbsolute)
+    end
+    local key = instring .. "\30" .. tostring(mode) .. "\30" ..
+        tostring(cleanNewLines) .. "\30" .. tostring(dropAbsolute)
+    local cached = translateCache[key]
+    if cached ~= nil then
+        return cached
+    end
+    local result = translateStringUncached(instring, mode, cleanNewLines, dropAbsolute)
+    translateCache[key] = result
+    return result
+end
+
 function GSE.TranslateSpell(str, mode, cleanNewLines, absolute)
     local output = ""
     local found = false
@@ -293,12 +343,16 @@ function GSE.TranslateSpell(str, mode, cleanNewLines, absolute)
     if not cleanNewLines then
         str = string.match(str, "^%s*(.-)%s*$")
     end
+    --@debug@
     GSE.PrintDebugMessage("GSE.TranslateSpell Attempting to translate " .. str, GNOME)
+    --@end-debug@
     if string.sub(str, string.len(str)) == "," then
         str = string.sub(str, 1, string.len(str) - 1)
     end
     if string.match(str, ";") then
+        --@debug@
         GSE.PrintDebugMessage("GSE.TranslateSpell found ; in " .. str .. " about to do recursive call.", GNOME)
+        --@end-debug@
         for _, w in ipairs(GSE.split(str, ";")) do
             local returnval
             found, returnval =
@@ -316,9 +370,13 @@ function GSE.TranslateSpell(str, mode, cleanNewLines, absolute)
         local conditionals, mods, etc = GSE.GetConditionalsFromString(str)
         if conditionals then
             output = output .. mods .. " "
+            --@debug@
             GSE.PrintDebugMessage("GSE.TranslateSpell conditionals found ", GNOME)
+            --@end-debug@
         end
+        --@debug@
         GSE.PrintDebugMessage("output: " .. output .. " mods: " .. mods .. " etc: " .. etc, GNOME)
+        --@end-debug@
         if not cleanNewLines then
             etc = string.match(etc, "^%s*(.-)%s*$")
         end
@@ -339,11 +397,15 @@ function GSE.TranslateSpell(str, mode, cleanNewLines, absolute)
         -- print("Foudn Spell: " .. foundspell .. " etc:" .. etc .. " mode:" .. mode .. " str:" .. str)
 
         if foundspell then
+            --@debug@
             GSE.PrintDebugMessage("Translating Spell ID : " .. etc .. " to " .. foundspell, GNOME)
+            --@end-debug@
             output = output .. GSEOptions.KEYWORD .. foundspell .. Statics.StringReset
             found = true
         else
+            --@debug@
             GSE.PrintDebugMessage("Did not find : " .. etc .. ".  Spell may no longer exist", GNOME)
+            --@end-debug@
             output = output .. GSEOptions.UNKNOWN .. etc .. Statics.StringReset
         end
     end
@@ -351,7 +413,9 @@ function GSE.TranslateSpell(str, mode, cleanNewLines, absolute)
 end
 
 function GSE.GetConditionalsFromString(str)
+    --@debug@
     GSE.PrintDebugMessage("Entering GSE.GetConditionalsFromString with : " .. str, GNOME)
+    --@end-debug@
     -- Check for conditionals
     local found = false
     local mods = ""
@@ -368,42 +432,56 @@ function GSE.GetConditionalsFromString(str)
             rightstr = i
         end
     end
+    --@debug@
     GSE.PrintDebugMessage("checking left : " .. (leftstr and leftstr or "nope"), GNOME)
+    --@end-debug@
+    --@debug@
     GSE.PrintDebugMessage("checking right : " .. (rightstr and rightstr or "nope"), GNOME)
+    --@end-debug@
     if rightstr and leftstr then
         found = true
+        --@debug@
         GSE.PrintDebugMessage("We have left and right stuff", GNOME)
+        --@end-debug@
         mods = string.sub(str, leftstr, rightstr)
+        --@debug@
         GSE.PrintDebugMessage("mods changed to: " .. mods, GNOME)
+        --@end-debug@
         str = string.sub(str, rightstr + 1)
+        str = string.gsub(str, "^%s+", "")
+        --@debug@
         GSE.PrintDebugMessage("str changed to: " .. str, GNOME)
+        --@end-debug@
     end
     -- if not cleanNewLines then
     --     str = string.match(str, "^%s*(.-)%s*$")
     -- end
     -- Check for resets
+    --@debug@
     GSE.PrintDebugMessage("checking for reset= in " .. str, GNOME)
+    --@end-debug@
     local resetleft = string.find(str, "reset=")
     if not GSE.isEmpty(resetleft) then
+        --@debug@
         GSE.PrintDebugMessage("found reset= at" .. resetleft, GNOME)
+        --@end-debug@
     end
 
-    local rightfound = false
-    local resetright = 0
     if resetleft then
-        for i = 1, #str do
-            local c = str:sub(i, i)
-            if c == " " then
-                if not rightfound then
-                    resetright = i
-                    rightfound = true
-                end
-            end
+        local resetright = string.find(str, "%s", resetleft) or (string.len(str) + 1)
+        local resetmod = string.sub(str, resetleft, resetright - 1)
+        if not GSE.isEmpty(mods) then
+            mods = mods .. " "
         end
-        mods = mods .. " " .. string.sub(str, resetleft, resetright)
+        mods = mods .. resetmod
+        --@debug@
         GSE.PrintDebugMessage("reset= mods changed to: " .. mods, GNOME)
-        str = string.sub(str, resetright + 1)
+        --@end-debug@
+        str = string.sub(str, resetright)
+        str = string.gsub(str, "^%s+", "")
+        --@debug@
         GSE.PrintDebugMessage("reset= test str changed to: " .. str, GNOME)
+        --@end-debug@
         found = true
     end
 
@@ -436,8 +514,7 @@ function GSE.GetSpellId(spellstring, mode, absolute)
     end
     local returnval, name, rank, spellId, rawSpellId
 
-    local ok, spellinfo = pcall(C_Spell.GetSpellInfo, spellstring)
-    if not ok then spellinfo = nil end
+    local spellinfo = GSE.GetSpellInfo(spellstring)
     if not spellinfo then
         if type(spellstring) == "string" then
             ---@diagnostic disable-next-line: missing-fields
@@ -480,13 +557,17 @@ function GSE.GetSpellId(spellstring, mode, absolute)
                 returnval = existingCache
             end
         end
+        --@debug@
         GSE.PrintDebugMessage(
             "Converted " .. spellstring .. " to " .. returnval .. " using mode " .. mode,
             "Translator"
         )
+        --@end-debug@
     else
         if not GSE.isEmpty(spellstring) then
+            --@debug@
             GSE.PrintDebugMessage(spellstring .. " was not found", "Translator")
+            --@end-debug@
             if not GSE.isEmpty(GSESpellCache[GetLocale()][spellstring]) then
                 returnval = GSESpellCache[GetLocale()][spellstring]
             end
@@ -497,7 +578,9 @@ function GSE.GetSpellId(spellstring, mode, absolute)
                 end
             end
         else
+            --@debug@
             GSE.PrintDebugMessage("Nothing was there to be found", "Translator")
+            --@end-debug@
         end
     end
     -- print("returning " .. returnval .. " from " .. spellstring)
@@ -533,4 +616,5 @@ end
 
 GSE.TranslatorAvailable = true
 
-GSE.DebugProfile("Translator")
+if type(GSE.DebugProfile) == "function" then GSE.DebugProfile("Translator") end
+

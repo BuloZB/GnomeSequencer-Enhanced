@@ -1,6 +1,10 @@
-local GSE = GSE
+local _, ns = ...
+ns.deferred = ns.deferred or {}
+
+local function setup()
+local GSE = ns.GSE
 local Statics = GSE.Static
-local AceGUI = LibStub("AceGUI-3.0")
+local UI = GSE.UI
 local L = GSE.L
 
 if GSE.isEmpty(GSE.GUI) then GSE.GUI = {} end
@@ -101,7 +105,9 @@ local function buildKeybindMenu()
                 local success, result =
                     pcall(
                     function()
+                        if not (C_Traits and C_Traits.GetConfigInfo) then return end
                         local loadout = C_Traits.GetConfigInfo(i)
+                        if not loadout then return end
                         local specnode = {
                             value = i,
                             text = "|cffffcc00" .. loadout.name .. Statics.StringReset,
@@ -135,7 +141,9 @@ local function buildKeybindMenu()
                     end
                 )
                 if not success then
+                    --@debug@
                     GSE.PrintDebugMessage(result, "ACTIONBAR OVERRIDES MENU")
+                    --@end-debug@
                 end
             end
         end
@@ -188,7 +196,9 @@ local function buildKeybindMenu()
                 local success =
                     pcall(
                     function()
+                        if not (C_Traits and C_Traits.GetConfigInfo) then return end
                         local loadout = C_Traits.GetConfigInfo(i)
+                        if not loadout then return end
                         local specnode = {
                             value = i,
                             text = "|cffffcc00" .. loadout.name .. Statics.StringReset,
@@ -243,17 +253,14 @@ local function showKeybind(editframe, bind, button, specialization, loadout, typ
             if GSE.GameMode < 10 then
                 specialization = 1
             else
-                if GSE.GameMode < 12 then
-                    specialization = GetSpecialization()
-                else
-                    specialization = C_SpecializationInfo.GetSpecialization()
-                end
+                local getSpec = C_SpecializationInfo and C_SpecializationInfo.GetSpecialization or GetSpecialization
+                specialization = getSpec and getSpec() or 1
             end
         end
         local initialbind = bind
         rightContainer:ReleaseChildren()
 
-        local keybind = AceGUI:Create("ControllerKeybinding")
+        local keybind = UI:Create("ControllerKeybinding")
         keybind:SetLabel(L["Keybind"])
         if not GSE.isEmpty(bind) then
             keybind:SetKey(bind)
@@ -267,7 +274,7 @@ local function showKeybind(editframe, bind, button, specialization, loadout, typ
         )
         keybind:SetLabel(L["Set Key to Bind"])
 
-        local SequenceListbox = AceGUI:Create("Dropdown")
+        local SequenceListbox = UI:Create("Dropdown")
         SequenceListbox:SetFullWidth(true)
         SequenceListbox:SetLabel(L["Sequence"])
         local names = {}
@@ -291,11 +298,12 @@ local function showKeybind(editframe, bind, button, specialization, loadout, typ
             end
         )
 
-        local TalentLoadOutList = AceGUI:Create("Dropdown")
+        local TalentLoadOutList = UI:Create("Dropdown")
         TalentLoadOutList:SetFullWidth(true)
         TalentLoadOutList:SetLabel(L["Talent Loadout"])
         local loadouts = { ["All"] = L["All Talent Loadouts"] }
-        if C_ClassTalents then
+        if C_ClassTalents and C_ClassTalents.GetConfigIDsBySpecID and C_Traits and C_Traits.GetConfigInfo and
+            GetSpecializationInfoForClassID then
             for _, v in ipairs(
                 C_ClassTalents.GetConfigIDsBySpecID(
                     GetSpecializationInfoForClassID(GSE.GetCurrentClassID(), specialization)
@@ -322,7 +330,7 @@ local function showKeybind(editframe, bind, button, specialization, loadout, typ
             end
         )
 
-        local savebutton = AceGUI:Create("Button")
+        local savebutton = UI:Create("Button")
         savebutton:SetText(L["Save"])
         savebutton:SetCallback(
             "OnClick",
@@ -345,10 +353,12 @@ local function showKeybind(editframe, bind, button, specialization, loadout, typ
                     if destination then
                         destination[bind] = button
                     else
+                        --@debug@
                         GSE.PrintDebugMessage(
                             "Error Saving Keybind " .. bind .. " " .. button,
                             Statics.DebugModules.Storage
                         )
+                        --@end-debug@
                     end
                     editframe.ManageTree()
                     local keypath
@@ -373,7 +383,7 @@ local function showKeybind(editframe, bind, button, specialization, loadout, typ
             end
         )
 
-        local delbutton = AceGUI:Create("Button")
+        local delbutton = UI:Create("Button")
         delbutton:SetText(L["Delete"])
         delbutton:SetCallback(
             "OnClick",
@@ -403,14 +413,14 @@ local function showKeybind(editframe, bind, button, specialization, loadout, typ
             end
         )
 
-        local row = AceGUI:Create("SimpleGroup")
+        local row = UI:Create("SimpleGroup")
         row:SetFullWidth(true)
         row:SetLayout("Flow")
         row:AddChild(keybind)
         row:AddChild(SequenceListbox)
         row:AddChild(TalentLoadOutList)
 
-        local row2 = AceGUI:Create("SimpleGroup")
+        local row2 = UI:Create("SimpleGroup")
         row2:SetFullWidth(true)
         row2:SetLayout("Flow")
         row2:AddChild(savebutton)
@@ -430,17 +440,14 @@ local function showKeybind(editframe, bind, button, specialization, loadout, typ
             if GSE.GameMode < 10 then
                 specialization = 1
             else
-                if GSE.GameMode < 12 then
-                    specialization = GetSpecialization()
-                else
-                    specialization = C_SpecializationInfo.GetSpecialization()
-                end
+                local getSpec = C_SpecializationInfo and C_SpecializationInfo.GetSpecialization or GetSpecialization
+                specialization = getSpec and getSpec() or 1
             end
         end
         local initialbind = bind
         rightContainer:ReleaseChildren()
 
-        local LABButtonState = AceGUI:Create("Dropdown")
+        local LABButtonState = UI:Create("Dropdown")
         LABButtonState:SetFullWidth(true)
         LABButtonState:SetLabel(L["Button State"])
         LABButtonState:SetDisabled(true)
@@ -464,9 +471,10 @@ local function showKeybind(editframe, bind, button, specialization, loadout, typ
             LABButtonState:SetValue("Default")
         end
 
-        local ActionButtonList = AceGUI:Create("Dropdown")
+        local ActionButtonList = UI:Create("Dropdown")
         ActionButtonList:SetFullWidth(true)
         ActionButtonList:SetLabel(L["Actionbar Buttons"])
+        if ActionButtonList.SetMaxVisibleItems then ActionButtonList:SetMaxVisibleItems(20) end
         local buttonnames = {
             "ActionButton",
             "MultiBarBottomLeftButton",
@@ -519,24 +527,38 @@ local function showKeybind(editframe, bind, button, specialization, loadout, typ
             end
         end
         if Dominos then
-            -- IDs 1-24 and 73-132 are Dominos-owned frames; the other ID ranges
-            -- reuse standard Blizzard frame names already captured above.
+            -- Dominos frame names differ between retail and Classic; list every
+            -- pattern either flavour uses (missing names just never match _G).
+            --   IDs 1-24 / 73-168 : DominosActionButtonN (retail tops out at 132,
+            --     Classic goes to 168).
+            --   IDs 25-72 / 133-168 (retail only): MultiBar*ActionButtonN -- new
+            --     Dominos frames (note the "Action" infix), NOT the Blizzard
+            --     MultiBar*ButtonN frames Dominos hides. On Classic these ranges
+            --     reuse the Blizzard names captured above instead.
             for i = 1, 24 do
                 if _G["DominosActionButton" .. i] then
                     buttonlist["DominosActionButton" .. i] = "DominosActionButton" .. i
                 end
             end
-            for i = 73, 132 do
+            for i = 73, 168 do
                 if _G["DominosActionButton" .. i] then
                     buttonlist["DominosActionButton" .. i] = "DominosActionButton" .. i
                 end
             end
-        end
-        if _G["EABButton1"] then
-            -- EllesmereUI action bars: EABButton1..180.
-            for i = 1, 180 do
-                if _G["EABButton" .. i] then
-                    buttonlist["EABButton" .. i] = "EABButton" .. i
+            local dominosBlizzPrefixes = {
+                "MultiBarRightActionButton",       -- IDs 25-36
+                "MultiBarLeftActionButton",        -- IDs 37-48
+                "MultiBarBottomRightActionButton", -- IDs 49-60
+                "MultiBarBottomLeftActionButton",  -- IDs 61-72
+                "MultiBar5ActionButton",           -- IDs 133-144
+                "MultiBar6ActionButton",           -- IDs 145-156
+                "MultiBar7ActionButton",           -- IDs 157-168
+            }
+            for _, prefix in ipairs(dominosBlizzPrefixes) do
+                for i = 1, 12 do
+                    if _G[prefix .. i] then
+                        buttonlist[prefix .. i] = prefix .. i
+                    end
                 end
             end
         end
@@ -552,7 +574,7 @@ local function showKeybind(editframe, bind, button, specialization, loadout, typ
             end
         end
 
-        -- Add any buttons referenced in saved AO data that exist in _G but weren't auto-detected
+        -- Add any buttons referenced in saved AO data that exist in G but weren't auto-detected
         if not GSE.isEmpty(GSE_C["ActionBarBinds"]) then
             if not GSE.isEmpty(GSE_C["ActionBarBinds"]["Specialisations"]) then
                 for _, buttons in pairs(GSE_C["ActionBarBinds"]["Specialisations"]) do
@@ -630,7 +652,7 @@ local function showKeybind(editframe, bind, button, specialization, loadout, typ
             end
         )
 
-        local SequenceListbox = AceGUI:Create("Dropdown")
+        local SequenceListbox = UI:Create("Dropdown")
         SequenceListbox:SetFullWidth(true)
         SequenceListbox:SetLabel(L["Sequence"])
         local names = {}
@@ -656,11 +678,12 @@ local function showKeybind(editframe, bind, button, specialization, loadout, typ
             end
         )
 
-        local TalentLoadOutList = AceGUI:Create("Dropdown")
+        local TalentLoadOutList = UI:Create("Dropdown")
         TalentLoadOutList:SetFullWidth(true)
         TalentLoadOutList:SetLabel(L["Talent Loadout"])
         local loadouts = { ["All"] = L["All Talent Loadouts"] }
-        if C_ClassTalents then
+        if C_ClassTalents and C_ClassTalents.GetConfigIDsBySpecID and C_Traits and C_Traits.GetConfigInfo and
+            GetSpecializationInfoForClassID then
             for _, v in ipairs(
                 C_ClassTalents.GetConfigIDsBySpecID(
                     GetSpecializationInfoForClassID(GSE.GetCurrentClassID(), specialization)
@@ -687,7 +710,7 @@ local function showKeybind(editframe, bind, button, specialization, loadout, typ
             end
         )
 
-        local savebutton = AceGUI:Create("Button")
+        local savebutton = UI:Create("Button")
         savebutton:SetText(L["Save"])
         savebutton:SetCallback(
             "OnClick",
@@ -730,7 +753,7 @@ local function showKeybind(editframe, bind, button, specialization, loadout, typ
             end
         )
 
-        local delbutton = AceGUI:Create("Button")
+        local delbutton = UI:Create("Button")
         delbutton:SetText(L["Delete"])
         delbutton:SetCallback(
             "OnClick",
@@ -757,7 +780,7 @@ local function showKeybind(editframe, bind, button, specialization, loadout, typ
             end
         )
 
-        local row = AceGUI:Create("SimpleGroup")
+        local row = UI:Create("SimpleGroup")
         row:SetFullWidth(true)
         row:SetLayout("Flow")
         row:AddChild(ActionButtonList)
@@ -765,7 +788,7 @@ local function showKeybind(editframe, bind, button, specialization, loadout, typ
         row:AddChild(TalentLoadOutList)
         row:AddChild(LABButtonState)
 
-        local row2 = AceGUI:Create("SimpleGroup")
+        local row2 = UI:Create("SimpleGroup")
         row2:SetFullWidth(true)
         row2:SetLayout("Flow")
         row2:AddChild(savebutton)
@@ -784,3 +807,5 @@ function GSE.GUI.SetupKeybind(editframe)
     end
     editframe.buildKeybindMenu = buildKeybindMenu
 end
+end
+table.insert(ns.deferred, setup)

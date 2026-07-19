@@ -1,7 +1,10 @@
-local GSE = GSE
-local Statics = GSE.Static
+local _, ns = ...
+ns.deferred = ns.deferred or {}
 
-local AceGUI = LibStub("AceGUI-3.0")
+local function setup()
+local GSE = ns.GSE
+local Statics = GSE.Static
+local UI = GSE.UI
 local L = GSE.L
 
 local function DisableCompareColoring(widget)
@@ -10,15 +13,29 @@ local function DisableCompareColoring(widget)
   end
 end
 
+-- Dump only the Versions of a sequence for the compare panes. Uses the same
+-- translate/unescape pipeline as GSE.ExportSequence(verbose) but strips the
+-- MetaData/KeyPress/etc wrapper so the comparison focuses on the actual
+-- rotation. (A full upstream-style structured diff is a separate follow-up.)
+local function ExportVersionsForCompare(sequence)
+  if GSE.isEmpty(sequence) then return "" end
+  local translated = GSE.UnEscapeTable(GSE.TranslateSequence(sequence, Statics.TranslatorMode.Current))
+  return GSE.Dump(translated.Versions) .. "\n"
+end
+
 function GSE.GUIShowCompareWindow(sequenceName, classid, newsequence)
-  local compareframe = AceGUI:Create("Frame")
+  local compareframe = UI:Create("Frame")
   compareframe:Hide()
   if GSE.isEmpty(GSEOptions.DefaultImportAction) then
     GSEOptions.DefaultImportAction = "MERGE"
   end
   compareframe.ChosenAction = GSEOptions.DefaultImportAction
+  compareframe.classid = classid
+  compareframe.sequenceName = sequenceName
   compareframe.frame:SetFrameStrata("MEDIUM")
   compareframe.frame:SetClampedToScreen(true)
+  compareframe.frame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+  compareframe.frame:SetSize(920, 600)
 
   compareframe:SetTitle(L["Sequence Compare"] .. " - " .. sequenceName)
 
@@ -29,30 +46,28 @@ function GSE.GUIShowCompareWindow(sequenceName, classid, newsequence)
       DisableCompareColoring(compareframe.NewText)
       compareframe:Hide()
       GSE.ShowSequences()
-      AceGUI:Release(self)
+      UI:Release(self)
     end
   )
 
   compareframe:SetLayout("List")
 
-  local headerGroup = AceGUI:Create("SimpleGroup")
+  local headerGroup = UI:Create("SimpleGroup")
   headerGroup:SetFullWidth(true)
   headerGroup:SetLayout("Flow")
 
-  local leftColumn = AceGUI:Create("MultiLineEditBox")
+  local leftColumn = UI:Create("MultiLineEditBox")
   compareframe.OrigText = leftColumn
-  leftColumn:SetRelativeWidth(0.5)
-  leftColumn:SetFullHeight(true)
+  leftColumn:SetRelativeWidth(0.48)
   leftColumn:SetNumLines(25)
   leftColumn:DisableButton(true)
   leftColumn:SetLabel(L["Local Macro"])
   IndentationLib.enable(leftColumn.editBox, Statics.IndentationColorTable, 4)
   leftColumn:SetCallback("OnRelease", DisableCompareColoring)
 
-  local rightColumn = AceGUI:Create("MultiLineEditBox")
+  local rightColumn = UI:Create("MultiLineEditBox")
   compareframe.NewText = rightColumn
-  rightColumn:SetRelativeWidth(0.5)
-  rightColumn:SetFullHeight(true)
+  rightColumn:SetRelativeWidth(0.48)
   rightColumn:SetNumLines(25)
   rightColumn:DisableButton(true)
   rightColumn:SetLabel(L["Updated Macro"])
@@ -64,17 +79,17 @@ function GSE.GUIShowCompareWindow(sequenceName, classid, newsequence)
 
   compareframe:AddChild(headerGroup)
 
-  local actionButtonGroup = AceGUI:Create("SimpleGroup")
+  local actionButtonGroup = UI:Create("SimpleGroup")
   actionButtonGroup:SetWidth(602)
   actionButtonGroup:SetLayout("Flow")
   actionButtonGroup:SetHeight(15)
 
-  local actionLabel = AceGUI:Create("Label")
+  local actionLabel = UI:Create("Label")
   actionLabel:SetText(L["Choose import action:"] .. "   ")
 
   actionButtonGroup:AddChild(actionLabel)
 
-  local actionChoiceRadio = AceGUI:Create("Dropdown")
+  local actionChoiceRadio = UI:Create("Dropdown")
   actionChoiceRadio:SetList(
     {
       ["MERGE"] = L["Merge"],
@@ -87,7 +102,7 @@ function GSE.GUIShowCompareWindow(sequenceName, classid, newsequence)
 
   actionButtonGroup:AddChild(actionChoiceRadio)
 
-  local nameeditbox = AceGUI:Create("EditBox")
+  local nameeditbox = UI:Create("EditBox")
 
   actionChoiceRadio:SetCallback(
     "OnValueChanged",
@@ -117,7 +132,7 @@ function GSE.GUIShowCompareWindow(sequenceName, classid, newsequence)
 
   actionButtonGroup:AddChild(nameeditbox)
 
-  local actionbutton = AceGUI:Create("Button")
+  local actionbutton = UI:Create("Button")
   actionbutton:SetText(L["Continue"])
   actionbutton:SetWidth(150)
   actionbutton:SetCallback(
@@ -152,10 +167,12 @@ function GSE.GUIShowCompareWindow(sequenceName, classid, newsequence)
         ["RENAME"] = L["Rename New Macro"]
       }
     )
-    compareframe.OrigText:SetText(GSE.ExportSequence(GSE.Library[classid][sequenceName], sequenceName, true))
-    compareframe.NewText:SetText(GSE.ExportSequence(newsequence, sequenceName, true))
+    compareframe.OrigText:SetText(ExportVersionsForCompare(GSE.Library[classid][sequenceName]))
+    compareframe.NewText:SetText(ExportVersionsForCompare(newsequence))
     compareframe:Show()
-    compareframe.classid = classid
+    if compareframe.frame and GSE.RegisterUIScaleFrame then GSE.RegisterUIScaleFrame(compareframe.frame) end
     compareframe.sequenceName = sequenceName
   end
 end
+end
+table.insert(ns.deferred, setup)

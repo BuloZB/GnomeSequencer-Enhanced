@@ -1,4 +1,8 @@
-local GSE = GSE
+local _, ns = ...
+ns.deferred = ns.deferred or {}
+
+local function setup()
+local GSE = ns.GSE
 local Statics = GSE.Static
 
 -- ---------------------------------------------------------------------------
@@ -13,7 +17,7 @@ local Statics = GSE.Static
 --     for macros we added via sync, tracked in syncTrackedNames below).
 -- ---------------------------------------------------------------------------
 
-local MAX_GLOBAL_MACROS = MAX_ACCOUNT_MACROS or 120
+local MAX_GLOBAL_MACROS = GSE.GetMaxAccountMacros() or 120
 
 -- Names of macros this module has added to GSEMacros. Used to detect deletions
 -- without accidentally removing Companion-installed macros that may not exist
@@ -115,3 +119,5 @@ loginFrame:SetScript("OnEvent", function(self, event)
         end
     end
 end)
+end
+table.insert(ns.deferred, setup)
