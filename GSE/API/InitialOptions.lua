@@ -64,6 +64,10 @@ function GSE.SetDefaultOptions()
     GSEOptions.DebugModules = {}
     GSEOptions.shownew = true
     if GSEOptions.ToolbarEnabled == nil then GSEOptions.ToolbarEnabled = true end
+    -- Announce a manual sequence reset in chat. Off by default (#1991): the
+    -- user pressed the reset themselves, so the message is noise unless they
+    -- are actively checking whether a reset binding fires.
+    GSEOptions.AnnounceMacroReset = false
 
     GSEOptions.DebugModules[Statics.DebugModules["Translator"]] = false
     GSEOptions.DebugModules[Statics.DebugModules["Editor"]] = false
@@ -98,6 +102,13 @@ function GSE.SetDefaultOptions()
         hide = true
     }
     GSEOptions.showCurrentSpells = true
+    -- forgetLastSequenceOnLogout: when true, PLAYER_LOGOUT wipes the editor's
+    -- "where was I" state (GSEOptions.frameLocations.sequenceeditor's
+    -- lastSequencePath / lastArea / lastKey / lastClassId) so the next session
+    -- opens the editor fresh instead of reopening the last node. Off keeps the
+    -- existing restore behaviour. Within a session the state is still tracked,
+    -- so closing and reopening the editor still returns you to where you were.
+    GSEOptions.forgetLastSequenceOnLogout = false
     -- FocusHighlightTint: master toggle for the 10%-opacity rail-color fill
     -- on the currently-focused block. When false, only the proc-pulsed
     -- border lines remain; when true, the block's empty areas (outside the

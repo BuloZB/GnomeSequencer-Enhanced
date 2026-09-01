@@ -9,6 +9,27 @@ local L = GSE.L
 
 if GSE.isEmpty(GSE.GUI) then GSE.GUI = {} end
 
+-- Read-only rendered notes stand in for a 3-line editable box. Taller than the
+-- box because rendered notes are prose: NativeUI's SetNumLines(3) is 76px, which
+-- shows barely two wrapped lines once the panel's own padding is taken out.
+local INLINE_NOTES_PANEL_HEIGHT = 120
+
+-- The Implementation Link is what the author pastes into a macro block, so it
+-- has to be valid Lua for ANY name they gave the variable. Built by blind
+-- concatenation as =GSE.V.<name>(), a name that is not a bare identifier --
+-- "SLG-SBAssist-LvL" -- came out as =GSE.V.SLG-SBAssist-LvL(), which parses as
+-- subtraction ending in a nil call, throws, and is swallowed as a missing
+-- variable: the editor's Current Value box worked (it indexes GSE.V[name])
+-- while the sequence produced nothing. Bracket-index anything that is not a
+-- valid identifier, the way GSE already references variables internally.
+local function VariableImplementationLink(name)
+    name = tostring(name or "")
+    if name:match("^[%a_][%w_]*$") then
+        return "=GSE.V." .. name .. "()"
+    end
+    return "=GSE.V['" .. name:gsub("'", "\\'") .. "']()"
+end
+
 local function SetEditBoxLabelGap(widget, gap)
     if not (widget and widget.label and widget.editBox and widget.frame) then return end
     local labelHeight = widget.label:GetStringHeight()
@@ -81,7 +102,7 @@ end]],
     keyEditBox:SetCallback(
         "OnTextChanged",
         function(self, event, text)
-            local implementationText = [[=GSE.V.]] .. text .. [[()]]
+            local implementationText = VariableImplementationLink(text)
             implementation:SetText(implementationText)
         end
     )
@@ -138,25 +159,39 @@ end]],
     container:AddChild(createInlineFieldRow(L["Name"], keyEditBox))
     container:AddChild(createInlineFieldRow(L["Author"], authoreditbox))
 
-    local commentsEditBox = UI:Create("MultiLineEditBox")
-    commentsEditBox:SetLabel(L["Help Information"])
-    commentsEditBox:SetNumLines(3)
-    commentsEditBox:SetFullWidth(true)
-    commentsEditBox:DisableButton(true)
-    commentsEditBox:SetText(variable.comments)
-    commentsEditBox:SetCallback(
-        "OnTextChanged",
-        function(self, event, text)
-            variable.comments = text
-        end
-    )
-    commentsEditBox:SetCallback(
-        "OnEditFocusLost",
-        function()
-            variable.comments = commentsEditBox:GetText()
-        end
-    )
-    container:AddChild(commentsEditBox)
+    -- Notes written on gse.tools arrive as markdown in `comments` with the
+    -- server's WoW-escape rendering alongside in `commentsHelp`. Show the
+    -- rendering read-only: the raw markdown is unreadable in-game, and an
+    -- in-game edit is discarded anyway (the server re-derives commentsHelp
+    -- from comments, and comments is only editable on the website).
+    if not GSE.isEmpty(variable.commentsHelp) and GSE.GUI.CreateReadOnlyNotesPanel then
+        GSE.GUI.CreateReadOnlyNotesPanel(
+            container,
+            L["Help Information"],
+            variable.commentsHelp,
+            {height = INLINE_NOTES_PANEL_HEIGHT}
+        )
+    else
+        local commentsEditBox = UI:Create("MultiLineEditBox")
+        commentsEditBox:SetLabel(L["Help Information"])
+        commentsEditBox:SetNumLines(3)
+        commentsEditBox:SetFullWidth(true)
+        commentsEditBox:DisableButton(true)
+        commentsEditBox:SetText(variable.comments)
+        commentsEditBox:SetCallback(
+            "OnTextChanged",
+            function(self, event, text)
+                variable.comments = text
+            end
+        )
+        commentsEditBox:SetCallback(
+            "OnEditFocusLost",
+            function()
+                variable.comments = commentsEditBox:GetText()
+            end
+        )
+        container:AddChild(commentsEditBox)
+    end
 
     -- Event Callback Section ─────────────────────────────────────────────────
     -- Helpers: convert between the array stored in variable.eventNames and the
@@ -347,7 +382,7 @@ end]],
     implementation:SetHeight(32)
     implementation:DisableButton(true)
     SetEditBoxLabelGap(implementation, 2)
-    local implementationText = [[=GSE.V.]] .. name .. [[()]]
+    local implementationText = VariableImplementationLink(name)
     implementation:SetText(implementationText)
 
     local currentOutput = UI:Create("EditBox")

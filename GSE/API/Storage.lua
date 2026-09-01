@@ -5,14 +5,6 @@ local L = GSE.L
 
 local GNOME = "Storage"
 
--- The global GSE is now a minimal locked proxy (see Plugins.lua) with no .V or
--- internals exposed, to deny in-memory scraping by third-party addons. But user
--- `=GSE.V.X()` action expressions and stored variable functs are compiled with
--- loadstring, which runs in the GLOBAL environment -- so they would resolve GSE
--- to the proxy and never find .V. Compile them in an environment where GSE is
--- the REAL private namespace, falling through to _G for everything else. This
--- restores the pre-privatisation resolution of GSE.V in variable expressions
--- without putting a global GSE handle back where other addons could read it.
 local gseEvalEnv = setmetatable({GSE = GSE}, {__index = _G})
 local function gseLoadstring(code, chunkname)
     local chunk, err = loadstring(code, chunkname)
@@ -24,10 +16,6 @@ local function safeGetSpellInfo(spellIdentifier)
     if spellIdentifier == nil or spellIdentifier == "" then return nil end
     local info = GSE.GetSpellInfo(spellIdentifier)
     if info then return info end
-    -- Cross-class fallback: if a spell name failed to resolve (e.g. viewing
-    -- another class's sequence where C_Spell.GetSpellInfo does not know the
-    -- name), look it up in the saved-variable cache populated by prior
-    -- imports / translator runs, then resolve by the cached numeric ID.
     if type(spellIdentifier) == "string" and not tonumber(spellIdentifier) and type(GSESpellCache) == "table" then
         local locale = GetLocale and GetLocale() or "enUS"
         local cachedID = GSESpellCache[locale] and GSESpellCache[locale][spellIdentifier]
@@ -39,15 +27,8 @@ end
 -- Track which class libraries have been decompressed into GSE.Library.
 GSE.LoadedClasses = GSE.LoadedClasses or {}
 
--- Sequences that failed to decode during load are collected here so the UI can
--- offer the player interactive options (delete / skip) rather than silent loss.
 GSE.CorruptSequences = GSE.CorruptSequences or {}
 
--- Walk an action/version tree and rename legacy `macrotext` ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ `macro`.
--- Platform storage historically emitted `macrotext` (a WoW SecureActionButton
--- runtime attribute name, never a stored-data field). The editor and runtime
--- read `macro`, so blocks that only have `macrotext` fall through the spell
--- branch and crash C_Spell.GetSpellInfo. Returns true if anything changed.
 local function renameMacrotextInTree(node)
     if type(node) ~= "table" then return false end
     local changed = false
@@ -89,19 +70,6 @@ local function renameMacrotextInTree(node)
     return changed
 end
 
---- Per-load checks applied to every sequence:
----  * recursively rename legacy `macrotext` ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ `macro` inside action blocks
----  * clear MetaData.Checksum when anything changed (the stored signature was
----    produced against the pre-rename tree and would no longer verify; the
----    addon's Checksum verifier returns "no_checksum" for an absent sig and
----    suppresses the warning until the sequence is re-exported).
---
--- Returns true when any change was made so the caller can re-save to disk.
--- Returns false, "macros-deprecated" when the sequence still uses the
--- pre-#1853 `Macros` field name. The on-disk MacrosÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢Versions migration
--- has been retired: the addon refuses to interpret a Macros-only record
--- and the caller is expected to surface a "upload to gse.tools to
--- convert" message and skip the sequence.
 local function migrateSequenceVersions(sequence)
     if type(sequence) ~= "table" then return false end
     if sequence["Macros"] ~= nil and sequence.Versions == nil then
@@ -546,6 +514,20 @@ function GSE.SnapshotDependentMacros(sequence)
 end
 
 --- Replace a current version of a Macro
+--- Store a sequence into the Library and the saved variables.
+--
+-- The Library entry is a CLONE, never the caller's own table. The editor keeps
+-- its working copy in editframe.Sequence and hands that same table here on
+-- Save; storing it directly made the two the same object, and from the first
+-- Save of a session onwards every per-version operation ran twice — once as
+-- the editor's own edit, then again through the "mirror into the Library so
+-- the tree updates before Save" block in each handler, which was by then
+-- writing into the same array. Delete removed two versions, New Version
+-- inserted two, drag reorder moved twice. The extra version also left the
+-- tree pointing at an index the reloaded sequence did not have, which is the
+-- nil-index error on the way back into the editor. Cloning restores the
+-- invariant those mirror blocks were written against: the Library holds a
+-- separate copy that only this function replaces.
 function GSE.ReplaceSequence(classid, sequenceName, sequence)
     if GSE.SanitizeSequenceEditorMarkup then
         GSE.SanitizeSequenceEditorMarkup(sequence)
@@ -553,14 +535,14 @@ function GSE.ReplaceSequence(classid, sequenceName, sequence)
     GSE.ComputeSequenceDependencies(sequence)
     GSE.SnapshotDependentMacros(sequence)
     if GSE.UpdateDeltaFork and GSE.UpdateDeltaFork(sequence) then
-        GSE.Library[classid][sequenceName] = sequence
+        GSE.Library[classid][sequenceName] = GSE.CloneSequence(sequence)
         GSE:SendMessage(Statics.Messages.SEQUENCE_UPDATED, sequenceName)
         return
     end
     -- Checksum is stamped on export only, not on save, so the stored checksum
     -- always reflects the last-exported state rather than the current edit state.
     GSESequences[classid][sequenceName] = GSE.EncodeMessage({sequenceName, sequence})
-    GSE.Library[classid][sequenceName] = sequence
+    GSE.Library[classid][sequenceName] = GSE.CloneSequence(sequence)
     GSE:SendMessage(Statics.Messages.SEQUENCE_UPDATED, sequenceName)
 end
 
@@ -1070,20 +1052,133 @@ local contextVersionPriority = {
     { metaKey = "Party",       flag = "inParty",       valueKey = "Party"       },
 }
 
-local function isPVESoloContext()
-    return not (
-        GSE.inScenario or
-        GSE.inArena or
-        GSE.PVPFlag or
-        GSE.inRaid or
-        GSE.inMythic or
-        GSE.inMythicPlus or
-        GSE.inHeroic or
-        GSE.inDungeon or
-        GSE.inTimeWalking or
-        GSE.inParty
-    )
+--- Every MetaData key that holds a VERSION NUMBER, derived from
+-- contextVersionPriority above rather than repeated. PVP appears twice in
+-- that table (once routing to Arena), so dedupe on valueKey.
+local contextVersionKeys = {}
+do
+    local seen = {}
+    for _, entry in ipairs(contextVersionPriority) do
+        if entry.valueKey and not seen[entry.valueKey] then
+            seen[entry.valueKey] = true
+            contextVersionKeys[#contextVersionKeys + 1] = entry.valueKey
+        end
+    end
 end
+
+--- The context keys, in priority order. Callers must not mutate the result.
+function GSE.GetContextVersionKeys()
+    return contextVersionKeys
+end
+
+--- How each context key is PRESENTED: the Configuration tab section it is
+-- drawn under, the row label, and its tooltip. `label` and `tip` are
+-- localisation keys (English source strings), translated by whoever displays
+-- them, so this table stays free of any locale dependency.
+--
+-- It lives here, beside the keys themselves, because #2023 was the two lists
+-- drifting apart: the editor kept its OWN row table, which had grown a PVESolo
+-- row the runtime has no context for and LOST the rows for Mythic, Heroic and
+-- Party -- all three of which the runtime still honours. An author who had set
+-- one of those (or imported a sequence that had) could not see it, could not
+-- change it, and was refused when deleting the version it pointed at, with a
+-- message naming a row that was not on screen. Deriving the rows from here
+-- means a key cannot exist without somewhere to set it.
+--
+-- Order is display order, not priority order (priority lives in
+-- contextVersionPriority above and is the runtime's business, not the user's).
+local contextVersionDisplay = {
+    { key = "Scenario",    section = "PVE", label = "Delves/Scenarios", tip = "The version of this sequence to use in Delves and Scenarios." },
+    { key = "Party",       section = "PVE", label = "Party",            tip = "The version of this sequence to use when in a party in the world." },
+    { key = "Dungeon",     section = "PVE", label = "Dungeon",          tip = "The version of this sequence to use in normal dungeons." },
+    { key = "Heroic",      section = "PVE", label = "Heroic",           tip = "The version of this sequence to use in heroic dungeons." },
+    { key = "Mythic",      section = "PVE", label = "Mythic",           tip = "The version of this sequence to use in Mythic Dungeons." },
+    { key = "MythicPlus",  section = "PVE", label = "Mythic+",          tip = "The version of this sequence to use in Mythic+ Dungeons." },
+    { key = "Timewalking", section = "PVE", label = "Timewalking",      tip = "The version of this sequence to use when in time walking dungeons." },
+    { key = "Raid",        section = "PVE", label = "Raid",             tip = "The version of this sequence that will be used when you enter raids." },
+    { key = "PVP",         section = "PVP", label = "PVP",              tip = "The version of this sequence to use in PVP." },
+    { key = "Arena",       section = "PVP", label = "Arena",            tip = "The version of this sequence to use in Arenas.  If this is not specified, GSE will look for a PVP version before the default." },
+}
+
+--- Display entries for every context key, in display order.
+--
+-- Built from contextVersionKeys, NOT from the table above: a key added to
+-- contextVersionPriority and forgotten here still gets an entry (labelled with
+-- its raw key, in PvE) rather than silently vanishing from the Configuration
+-- tab, which is the failure this whole pair exists to prevent. Returns a fresh
+-- table each call; callers may keep it but must not expect it to update.
+function GSE.GetContextVersionDisplay()
+    local known, emitted, display = {}, {}, {}
+    for _, key in ipairs(contextVersionKeys) do known[key] = true end
+    for _, entry in ipairs(contextVersionDisplay) do
+        -- Skip a display entry whose key the runtime no longer knows about --
+        -- the reverse drift, a row nothing reads.
+        if known[entry.key] then
+            emitted[entry.key] = true
+            display[#display + 1] = { key = entry.key, section = entry.section, label = entry.label, tip = entry.tip }
+        end
+    end
+    for _, key in ipairs(contextVersionKeys) do
+        if not emitted[key] then
+            display[#display + 1] = { key = key, section = "PVE", label = key, tip = key }
+        end
+    end
+    return display
+end
+
+--- The label a context key is shown under, for messages that have to name one.
+-- Falls back to the key so a caller always gets something printable.
+function GSE.GetContextVersionLabel(key)
+    for _, entry in ipairs(contextVersionDisplay) do
+        if entry.key == key then return entry.label end
+    end
+    return key
+end
+
+--- Which MetaData entries point AT `version`.
+-- Returns a list of key names, empty when nothing references it. Deleting a
+-- version that something points at is refused rather than silently repointed:
+-- an author who set Raid to version 4 chose that, and moving it to Default
+-- behind their back changes which macro fires in a raid.
+function GSE.VersionReferencesInUse(metadata, version)
+    local inUse = {}
+    if type(metadata) ~= "table" then return inUse end
+    version = tonumber(version)
+    if not version then return inUse end
+    if tonumber(metadata.Default) == version then inUse[#inUse + 1] = "Default" end
+    for _, key in ipairs(contextVersionKeys) do
+        if tonumber(metadata[key]) == version then inUse[#inUse + 1] = key end
+    end
+    return inUse
+end
+
+--- Move every version reference down one slot after `version` was deleted.
+--
+-- Only references AFTER the deleted version move — what they point at slid
+-- down by one. A reference BEFORE it cannot be affected: deleting a later
+-- version does not renumber earlier ones. A reference AT it never reaches
+-- here, because VersionReferencesInUse blocks the delete first.
+--
+-- Default used to be decremented unconditionally, so deleting version 5 while
+-- Default was 4 silently moved Default to 3 — the sequence then ran a macro
+-- the author never selected.
+function GSE.ShiftVersionReferencesAfterDelete(metadata, version)
+    if type(metadata) ~= "table" then return end
+    version = tonumber(version)
+    if not version then return end
+    local function shift(value)
+        local n = tonumber(value)
+        if n and n > version then return n - 1 end
+        return value
+    end
+    metadata.Default = shift(metadata.Default)
+    for _, key in ipairs(contextVersionKeys) do
+        if not GSE.isEmpty(metadata[key]) then
+            metadata[key] = shift(metadata[key])
+        end
+    end
+end
+
 
 --- Return the Active Sequence Version for a Sequence.
 function GSE.GetActiveSequenceVersion(sequenceName)
@@ -1095,12 +1190,14 @@ function GSE.GetActiveSequenceVersion(sequenceName)
         return
     end
     local meta = GSE.Library[classid][sequenceName]["MetaData"]
+    -- PVESolo is gone: it was never one of GSE's contexts (it is absent from
+    -- contextVersionPriority), only an editor row plus this special case, and
+    -- "solo" is what Default already means -- no context flag set. A sequence
+    -- saved with a PVESolo value now follows Default when solo, like every
+    -- sequence that never had one.
     local vers = (not GSE.isEmpty(meta.Default)) and meta.Default or 1
-    if not GSE.isEmpty(meta.PVESolo) and isPVESoloContext() then
-        vers = meta.PVESolo
-    end
     for _, ctx in ipairs(contextVersionPriority) do
-        if not GSE.isEmpty(meta[ctx.metaKey]) and GSE[ctx.flag] then
+        if meta[ctx.metaKey] and GSE[ctx.flag] then
             vers = meta[ctx.valueKey]
             break
         end
@@ -1224,7 +1321,7 @@ function GSE.OOCUpdateSequence(name, sequence)
         GSE.Print(
             string.format(
                 L[
-                    "%s macro may cause a 'RestrictedExecution.lua:431' error as it has %s actions when compiled.  This get interesting when you go past 255 actions.  You may need to simplify this macro."
+                    "%s sequence may cause a 'RestrictedExecution.lua:431' error as it has %s actions when compiled.  This get interesting when you go past 255 actions.  You may need to simplify this sequence."
                 ],
                 name,
                 actionCount
@@ -1956,7 +2053,13 @@ function GSE.GetMacroResetImplementation()
         end
     end
     if flagactive then
-        returnstring = string.format(Statics.MacroResetSkeleton, table.concat(activemods, " and "))
+        -- Chosen here, not in the snippet: the snippet runs in the secure
+        -- environment and cannot see GSEOptions. Changing the option therefore
+        -- needs the button rebuilding, which is why the setting prompts for a
+        -- reload (same as the modifier-pause toggles).
+        local skeleton = GSEOptions.AnnounceMacroReset and Statics.MacroResetSkeletonAnnounced
+            or Statics.MacroResetSkeleton
+        returnstring = string.format(skeleton, table.concat(activemods, " and "))
     end
     return returnstring
 end
@@ -2221,7 +2324,7 @@ function GSE.processAction(action, metaData, variables, path)
     elseif action.Type == Statics.Actions.If then
         -- process repeats for the block
         if GSE.isEmpty(action.Variable) then
-            GSE.Print(L["If Blocks Require a variable."], L["Macro Compile Error"])
+            GSE.Print(L["If Blocks Require a variable."], L["Sequence Compile Error"])
             return
         end
         local funct = action.Variable
@@ -2581,7 +2684,7 @@ function GSE.CreateGSE3Button(spelllist, name, combatReset)
         GSE.Print(
             string.format(
                 "%s " ..
-                    L["was unable to be programmed.  This macro will not fire until errors in the macro are corrected."],
+                    L["was unable to be programmed.  This sequence will not fire until errors in the sequence are corrected."],
                 name
             ),
             "BROKEN MACRO"

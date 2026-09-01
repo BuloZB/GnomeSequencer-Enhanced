@@ -11,6 +11,9 @@ local L = GSE.L
 local origToggle = nil
 local widgetId = 0
 local layoutSuspended = 0
+-- Call counters for the editor-open probe. Two increments; no gating needed.
+-- A hard lock "running our code" is either one slow pass or a great many fast
+-- ones, and these tell the two apart without a profiler.
 local layoutResumeScheduled = false
 local frameTemplate = BackdropTemplateMixin and "BackdropTemplate" or nil
 
@@ -1714,6 +1717,15 @@ function baseMethods:AddChild(child)
     child.parent = self
     child.frame:SetParent(self.content or self.frame)
     table.insert(self.children, child)
+    -- TWO full layout passes per child added, and the first is redundant: the
+    -- parent's pass lays `self` out again as one of its own children. Building
+    -- a panel of n widgets therefore costs 2n cascading layouts, and a nested
+    -- shape (a priority Loop holding ten child blocks) pays it at every level.
+    --
+    -- DrawSequenceEditor already brackets its build in Suspend/ResumeLayout so
+    -- these collapse to nothing and it lays out once at the end. Everything
+    -- that builds widgets OUTSIDE such a bracket -- the editor's own
+    -- construction, the config/metadata panel -- pays the full 2n.
     self:DoLayout()
     if self.parent and self.parent.DoLayout then self.parent:DoLayout() end
 end
@@ -1741,6 +1753,16 @@ function baseMethods:Release()
     self.frame:Hide()
     self.frame:ClearAllPoints()
     self.frame:SetParent(UIParent)
+    -- Bank poolable widgets for reuse (see the widget pool block above).
+    -- __gsePristineKeys marks a pooled type; the InPool flag guards a double
+    -- Release from banking the same widget twice (two acquirers would then
+    -- share one frame).
+    if not _G.GSE_NoWidgetPool and self.__gsePristineKeys and not self.__gseInPool then
+        self.__gseInPool = true
+        local pool = UI.widgetPool[self.type]
+        if not pool then pool = {}; UI.widgetPool[self.type] = pool end
+        pool[#pool + 1] = self
+    end
 end
 
 function baseMethods:DoLayout()
@@ -2274,6 +2296,15 @@ local function createFrame()
     end
 
     function widget:DoLayout()
+        -- Honour the suspend flag exactly as baseMethods:DoLayout does. This
+        -- override did not, so it was the one hole in the batching: the sequence
+        -- editor suspends layout for the whole block draw and lays out once at
+        -- the end, but every macro box's height fit walks its ancestors to the
+        -- top and reached this. The recursion into children stops at the guard
+        -- one level down, so the leak was a window pass plus a footer pass per
+        -- fit rather than a full tree -- real work, done once per block, thrown
+        -- away by the layout that finishDraw does anyway.
+        if layoutSuspended > 0 then return end
         doLayout(self)
         layoutFooterChildren()
     end
@@ -4572,11 +4603,15 @@ local function createTreeButton(widget)
                 local status = widget.status or widget.localstatus
                 if status.groups[self.uniquevalue] then
                     status.groups[self.uniquevalue] = nil
+                    widget:Fire("OnGroupExpanded", self.uniquevalue, false)
                     widget:RefreshTree()
                     UI:ClearFocus()
                     return
                 end
                 status.groups[self.uniquevalue] = true
+                -- BEFORE the refresh: a listener may add children to this node,
+                -- and the refresh has to draw them.
+                widget:Fire("OnGroupExpanded", self.uniquevalue, true)
                 if not self.selected then widget:SetSelected(self.uniquevalue) end
                 widget:RefreshTree()
                 UI:ClearFocus()
@@ -4590,6 +4625,7 @@ local function createTreeButton(widget)
                 if self.hasChildren then
                     local status = widget.status or widget.localstatus
                     status.groups[self.uniquevalue] = not status.groups[self.uniquevalue]
+                    widget:Fire("OnGroupExpanded", self.uniquevalue, status.groups[self.uniquevalue] and true or false)
                     widget:RefreshTree()
                 end
             elseif mouseButton == "RightButton" then
@@ -4606,6 +4642,7 @@ local function createTreeButton(widget)
             if not self.hasChildren then return end
             local status = widget.status or widget.localstatus
             status.groups[self.uniquevalue] = not status.groups[self.uniquevalue]
+            widget:Fire("OnGroupExpanded", self.uniquevalue, status.groups[self.uniquevalue] and true or false)
             widget:RefreshTree()
         end
     )
@@ -5389,7 +5426,22 @@ local function createTreeGroup()
             scrollbar:SetValue(math.min(math.max(value - delta, minValue), maxValue))
         end
     )
-    treeframe:SetScript("OnSizeChanged", function() widget:RefreshTree() end)
+    treeframe:SetScript("OnSizeChanged", function()
+        -- RefreshTree's content auto-fit calls treeframe:SetWidth() itself, and
+        -- WoW fires OnSizeChanged SYNCHRONOUSLY, so that lands straight back
+        -- here and rebuilds the whole tree again -- measuring every visible
+        -- row's text -- to arrive at the width it just set. It terminates
+        -- (getTreeTextWidth rules the FULL text, so the result does not depend
+        -- on the current width), but it doubles every tree rebuild that changes
+        -- width, and it nests: the second refresh runs INSIDE the first.
+        --
+        -- Only react to a size we did NOT just set. A real user drag still
+        -- differs from st.treewidth and still refreshes.
+        local st = widget.status or widget.localstatus
+        local w = treeframe:GetWidth() or 0
+        if st and st.treewidth and math.abs(w - st.treewidth) <= 2 then return end
+        widget:RefreshTree()
+    end)
 
     local function setModernTreeDraggerColor(state)
         if not (shouldUseElvUISkin() or getModernClassColor(1)) then return end
@@ -5750,7 +5802,7 @@ local function createTreeGroup()
     return widget
 end
 
-function UI:Create(typeName)
+local function constructWidget(typeName)
     if typeName == "Frame" or typeName == "Window" then
         return createFrame()
     elseif typeName == "SimpleGroup" or typeName == "InlineGroup" or typeName == "Spacer" then
@@ -5784,6 +5836,192 @@ function UI:Create(typeName)
     end
 
     error(("GSE.UI does not implement widget type '%s' yet."):format(tostring(typeName)), 2)
+end
+
+-- ---------------------------------------------------------------------------
+-- Widget pool. WoW frames can never be destroyed, and Release() used to just
+-- hide them -- so every editor redraw leaked its entire widget set (measured:
+-- +238 widgets and ~12 MB of Lua memory PER VERSION CLICK, a 1.2 GB session,
+-- and 0.3-1.2 s unattributable GC/engine stalls after every click). Widgets
+-- are plain tables of closures over their own frame, so the SAME table can be
+-- reused: on release it is reset to its just-constructed state and banked; on
+-- Create it is handed back out instead of building new frames.
+--
+-- Reset contract, in order:
+--   * every key added after construction is removed (callers decorate widgets
+--     with fields and wrapped methods; a reused widget must not carry them)
+--   * callbacks/children become fresh tables
+--   * frame scripts recorded at construction are restored on every subframe
+--     the widget exposes (callers SetScript extra handlers, e.g. OnTabPressed)
+--   * the frame is hidden, unanchored, reparented and restored to its
+--     construction size; editbox text and label text are cleared
+-- HookScript cannot be undone, but every HookScript site in GSE_GUI guards
+-- with a once-only flag on the frame (audited), so reuse cannot stack hooks.
+-- Kill switch for soak-testing: /run GSE_NoWidgetPool = true (then /reload).
+-- Only high-churn leaf/container types pool; window-level widgets (Frame,
+-- ScrollFrame, TabGroup, tree) keep their old behaviour.
+local POOLED_TYPES = {
+    SimpleGroup = true, InlineGroup = true, Spacer = true,
+    Label = true, Heading = true, InteractiveLabel = true,
+    CheckBox = true, Icon = true, Button = true, Dropdown = true,
+    EditBox = true, EditBoxExampleAll = true, MultiLineEditBox = true,
+}
+local widgetPool = {}
+UI.widgetPool = widgetPool
+
+local SCRIPT_HANDLERS = {
+    "OnUpdate", "OnEvent", "OnShow", "OnHide", "OnEnter", "OnLeave", "OnClick",
+    "OnMouseDown", "OnMouseUp", "OnMouseWheel", "OnSizeChanged",
+    "OnDragStart", "OnDragStop", "OnTextChanged", "OnEnterPressed",
+    "OnEscapePressed", "OnEditFocusGained", "OnEditFocusLost", "OnTabPressed",
+    "OnKeyDown", "OnKeyUp", "OnChar", "OnCursorChanged",
+}
+
+local function snapshotPristine(widget)
+    local keys, scripts, seen = {}, {}, {}
+    for k, v in pairs(widget) do
+        keys[k] = true
+        if type(v) == "table" and v.GetScript and v.SetScript and not seen[v] then
+            seen[v] = true
+            local rec = {}
+            for _, h in ipairs(SCRIPT_HANDLERS) do
+                local ok, fn = pcall(v.GetScript, v, h)
+                if ok and fn then rec[h] = fn end
+            end
+            scripts[#scripts + 1] = { v, rec }
+        end
+    end
+    -- Callers also hang REGIONS (FontStrings, Textures), child FRAMES and
+    -- plain FLAGS directly off the widget's frames -- the TOP frame and its
+    -- exposed subframes alike (frame:CreateFontString, CreateFrame with the
+    -- frame as parent, editBox.GSEMacroEditorColoring = true...). All of that
+    -- is invisible to the widget-table key sweep and survives into the next
+    -- life: dependency headers bled into macro blocks, block rail art bled
+    -- into the Config panel, and the macro-colouring flag turned the NOTES
+    -- box into a macro editor. Record, for every frame the widget exposes,
+    -- its construction-time key set, regions and children; on reuse, sweep
+    -- added keys and hide stranger regions/children.
+    local frames = {}
+    for _, v in pairs(widget) do
+        if type(v) == "table" and v.GetScript and v.SetScript and v.CreateFontString and not frames[v] then
+            local fkeys = {}
+            for k in pairs(v) do fkeys[k] = true end
+            local owned = {}
+            for _, region in ipairs({ v:GetRegions() }) do owned[region] = true end
+            for _, child in ipairs({ v:GetChildren() }) do owned[child] = true end
+            local rec = { keys = fkeys, owned = owned }
+            -- EditBoxes carry their own frame-level text colour and
+            -- enabled state (Disable() greys the text). Neither is a table
+            -- key, a region, nor a script, so the sweeps above cannot see
+            -- them -- a box released while disabled came back grey.
+            if v.GetTextColor and v.SetTextColor and v.GetText then
+                rec.textColor = { v:GetTextColor() }
+            end
+            if v.IsEnabled and v.Enable then
+                rec.enabled = v:IsEnabled() and true or false
+            end
+            frames[v] = rec
+        end
+    end
+    widget.__gsePristineFrames = frames
+    -- Callers also restyle the widget's FontStrings (class colours, heading
+    -- fonts, justification). Record each construction-time text region's font,
+    -- colour and justify so a reused label does not wear its previous life's
+    -- styling.
+    local texts = {}
+    for _, v in pairs(widget) do
+        -- FontStrings only: they carry SetFont/SetText but -- unlike Frames and
+        -- EditBoxes, which also have font APIs -- cannot CreateFontString.
+        -- (Filtering on "no SetScript" was wrong: FontStrings are ScriptRegions
+        -- and DO have SetScript, so nothing was ever captured.)
+        if type(v) == "table" and v.GetFont and v.SetText and not v.CreateFontString and not texts[v] then
+            texts[v] = {
+                font = { v:GetFont() },
+                color = { v:GetTextColor() },
+                justifyH = v.GetJustifyH and v:GetJustifyH() or nil,
+                justifyV = v.GetJustifyV and v:GetJustifyV() or nil,
+            }
+        end
+    end
+    widget.__gsePristineTexts = texts
+    widget.__gsePristineKeys = keys
+    widget.__gsePristineScripts = scripts
+    widget.__gsePristineW, widget.__gsePristineH = widget.frame:GetSize()
+    keys.__gsePristineKeys, keys.__gsePristineScripts = true, true
+    keys.__gsePristineW, keys.__gsePristineH = true, true
+    keys.__gsePristineFrames, keys.__gsePristineTexts = true, true
+end
+
+local function resetForReuse(widget)
+    local keys = widget.__gsePristineKeys
+    for k in pairs(widget) do
+        if not keys[k] then widget[k] = nil end
+    end
+    widget.callbacks = {}
+    widget.children = {}
+    for _, entry in ipairs(widget.__gsePristineScripts) do
+        local target, rec = entry[1], entry[2]
+        for _, h in ipairs(SCRIPT_HANDLERS) do
+            pcall(target.SetScript, target, h, rec[h])
+        end
+    end
+    local frame = widget.frame
+    for subframe, rec in pairs(widget.__gsePristineFrames or {}) do
+        -- Sweep caller-added fields off the frame itself ([0] is the engine
+        -- userdata; construction-time keys stay).
+        for k in pairs(subframe) do
+            if not rec.keys[k] and k ~= 0 then subframe[k] = nil end
+        end
+        for _, region in ipairs({ subframe:GetRegions() }) do
+            if not rec.owned[region] then region:Hide() end
+        end
+        for _, child in ipairs({ subframe:GetChildren() }) do
+            if not rec.owned[child] then child:Hide() end
+        end
+        if rec.textColor then
+            pcall(subframe.SetTextColor, subframe, unpack(rec.textColor))
+        end
+        if rec.enabled ~= nil then
+            if rec.enabled then pcall(subframe.Enable, subframe)
+            else pcall(subframe.Disable, subframe) end
+        end
+    end
+    frame:Hide()
+    frame:ClearAllPoints()
+    frame:SetParent(UIParent)
+    if frame.SetAlpha then frame:SetAlpha(1) end
+    frame:SetSize(widget.__gsePristineW, widget.__gsePristineH)
+    local eb = widget.editBox or widget.editbox
+    if eb then
+        if eb.ClearFocus then pcall(eb.ClearFocus, eb) end
+        if eb.SetText then pcall(eb.SetText, eb, "") end
+    end
+    if widget.label and widget.label.SetText then pcall(widget.label.SetText, widget.label, "") end
+    if widget.text and widget.text ~= widget.label and widget.text.SetText then
+        pcall(widget.text.SetText, widget.text, "")
+    end
+    for fontString, style in pairs(widget.__gsePristineTexts or {}) do
+        if style.font[1] then pcall(fontString.SetFont, fontString, unpack(style.font)) end
+        pcall(fontString.SetTextColor, fontString, unpack(style.color))
+        if style.justifyH then pcall(fontString.SetJustifyH, fontString, style.justifyH) end
+        if style.justifyV then pcall(fontString.SetJustifyV, fontString, style.justifyV) end
+    end
+end
+
+function UI:Create(typeName)
+    if not _G.GSE_NoWidgetPool and POOLED_TYPES[typeName] then
+        local pool = widgetPool[typeName]
+        if pool and #pool > 0 then
+            local widget = table.remove(pool)
+            resetForReuse(widget)
+            return widget
+        end
+    end
+    local widget = constructWidget(typeName)
+    if POOLED_TYPES[typeName] then
+        snapshotPristine(widget)
+    end
+    return widget
 end
 
 function UI:Release(widget)

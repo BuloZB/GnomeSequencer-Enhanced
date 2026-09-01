@@ -549,40 +549,13 @@ local function GetEditorScrollContainer(frame)
     return editor and editor.scrollContainer
 end
 
--- When the macro edit box has focus, wheel scrolls inside it; otherwise
--- forward to the editor's outer scroll container.
-local function ScrollFocusedMacroEditor(macroEditBox, delta)
-    local editBox = macroEditBox and macroEditBox.editBox
-    if not (editBox and editBox.HasFocus and editBox:HasFocus()) then return false end
-
-    local scrollFrame = macroEditBox.scrollFrame
-    if not (scrollFrame and scrollFrame.GetVerticalScroll and scrollFrame.SetVerticalScroll) then return true end
-
-    local range = (scrollFrame.GetVerticalScrollRange and scrollFrame:GetVerticalScrollRange()) or 0
-    if range <= 0 then return true end
-
-    local current = scrollFrame:GetVerticalScroll() or 0
-    local wheelDelta = delta or 0
-    if wheelDelta > 0 then
-        wheelDelta = 1
-    elseif wheelDelta < 0 then
-        wheelDelta = -1
-    end
-    local step = math.max(1, math.min(MACRO_EDITOR_SCROLL_PIXELS, range / 10))
-    local target = current - (wheelDelta * step)
-    if target < 0 then
-        target = 0
-    elseif target > range then
-        target = range
-    end
-    scrollFrame:SetVerticalScroll(target)
-    return true
-end
-
 local function MacroEditor_OnMouseWheel(mouseFrame, delta)
+    -- Macro boxes auto-fit their content (#1998), so there is nothing left to
+    -- scroll INSIDE one: the wheel always drives the outer block list, making
+    -- scrolling identical wherever the cursor hovers in the editor. (The old
+    -- focused-box inner scroll predates the auto-fit and made wheel behaviour
+    -- change depending on what the mouse happened to be over.)
     local macroEditBox = mouseFrame and mouseFrame.gseWheelForwardWidget
-    if ScrollFocusedMacroEditor(macroEditBox, delta) then return end
-
     local scrollContainer = GetEditorScrollContainer(macroEditBox and macroEditBox.gseWheelForwardFrame)
     if scrollContainer and scrollContainer.MoveScroll then
         scrollContainer:MoveScroll(delta)
@@ -611,6 +584,197 @@ end
 -- Inline "X/255" indicator anchored to the top-right of the macro edit box,
 -- replacing the old side-panel that listed compiled output. Created on first
 -- call; subsequent calls just retext + recolour.
+-- Size the macro-commands box to its content: one row per line of macro
+-- text, never fewer than MACRO_BOX_MIN_LINES (short blocks keep a usable
+-- box), never more than MACRO_BOX_MAX_LINES (a huge block scrolls instead
+-- of swallowing the window). Re-fitted as the user types; only re-lays out
+-- when the row count actually changes so fast typing stays cheap.
+local MACRO_BOX_MIN_LINES = 3
+local MACRO_BOX_MAX_LINES = 24
+-- Rows the widget is BUILT at, before the first fit runs. This has to stay in
+-- step with macrolayout's SetHeight(108) below -- NativeUI's SetNumLines(n) is
+-- n * 16 + STYLE.frameContentTop (28), so 5 rows is exactly 108. The fit pushes
+-- the DELTA from this baseline up through the fixed-height ancestors, so a
+-- baseline that disagrees with the container leaves that much dead space under
+-- the box. It is NOT the minimum -- MACRO_BOX_MIN_LINES is, and is free to move
+-- on its own.
+local MACRO_BOX_BASE_LINES = 5
+-- Slack the fitted frame carries over the measured text, and the floor NativeUI
+-- clamps the inner editbox to (updateEditBoxSize). At a small chat font the
+-- min-row fit lands under that floor and the bottom row would render outside
+-- the visible scroll area, so the frame is never asked for less.
+local MACRO_BOX_CHROME_SLACK = 6
+local MACRO_BOX_MIN_INNER = 40
+-- Rows -> pixels in the box's OWN font: a row is the measured line height, and
+-- every row after the first also carries the editbox's line spacing.
+-- Height meters, keyed by the box's frame rather than stored ON it.
+--
+-- A WoW FontString cannot be destroyed, so the meter has to be created once per
+-- frame and found again on reuse. It lived on the widget table first -- #2014's
+-- pool strips post-construction keys, so that leaked one FontString per reuse --
+-- and then on the frame, which this branch's reset now sweeps too, which would
+-- leak it again exactly the same way. Neither table is a safe home, so it lives
+-- here. Weak keys: the frame is the only thing that should keep an entry alive.
+--
+-- Left as a warning for the next caller that caches a region on a widget or its
+-- frame: the pool is now entitled to remove it, and the failure is silent and
+-- cumulative -- an orphan FontString per reuse, each one another entry in the
+-- GetRegions() walk that the reset itself runs on every reuse.
+local macroBoxHeightMeters = setmetatable({}, {__mode = "k"})
+local function MacroBoxRowsHeight(rows, oneRow, spacing)
+    return rows * oneRow + math.max(rows - 1, 0) * spacing
+end
+-- The ancestor push a fitted box needs, run OUTSIDE the frame that drew it.
+-- Walking the ancestors per box DURING the draw was the version-click stall:
+-- the walk itself costs almost no Lua, but each mid-draw ancestor resize
+-- feeds the engine's layout/anchor invalidation, and per-box walks multiplied
+-- that into a 0.5-1.2 s blocked frame (proven by bisection: draw with the
+-- walk skipped is stall-free, everything else unchanged). Pushes are queued
+-- and flushed in ONE batch per frame instead.
+--   ...and ONLY within the block. The first auto-height ancestor is the block
+-- panel, which recomputes its height from its children; everything above it
+-- (the block list, the scroll frame, the window) is SHARED chrome -- resizing
+-- those per block collapsed the editor (issue #2002). Past that boundary we
+-- only re-lay out, never resize.
+-- layoutQueue/layoutSeen: the shared ancestors (block list, scroll frame...)
+-- are common to EVERY box, and re-laying them out once per box is the SetPoint
+-- storm that stalled the client. Each container is queued ONCE per flush, in
+-- discovery order (inner containers first), and laid out after all height
+-- pushes have been applied.
+local function ApplyFitPush(macroEditBox, delta, layoutQueue, layoutSeen)
+    local parent = macroEditBox.parent
+    local sharedChrome = false
+    while parent do
+        if parent.autoAdjustHeight then sharedChrome = true end
+        if not sharedChrome and delta ~= 0 and parent.explicitHeight
+            and parent.height and parent.SetHeight then
+            parent:SetHeight(parent.height + delta)
+            -- A resized ancestor still has to re-place its children, so it goes
+            -- on the SAME queue as the pass-through ones. Previously it was laid
+            -- out by SetHeight itself, twice (baseMethods:SetHeight lays out
+            -- self AND self.parent) and immediately -- outside the dedupe, once
+            -- per box. Measured: 90 of one open's 289 layout passes came from
+            -- those two lines alone.
+            if not layoutSeen[parent] then
+                layoutSeen[parent] = true
+                layoutQueue[#layoutQueue + 1] = parent
+            end
+        elseif parent.DoLayout and not layoutSeen[parent] then
+            layoutSeen[parent] = true
+            layoutQueue[#layoutQueue + 1] = parent
+        end
+        parent = parent.parent
+    end
+end
+local pendingFitPushes = {}
+local fitFlushDriver = CreateFrame("Frame")
+fitFlushDriver:Hide()
+fitFlushDriver:SetScript("OnUpdate", function(self)
+    local pushes = pendingFitPushes
+    pendingFitPushes = {}
+    self:Hide()
+    local layoutQueue, layoutSeen = {}, {}
+    local batched = UI and UI.SuspendLayout
+    if batched then UI:SuspendLayout() end
+    for _, push in ipairs(pushes) do
+        -- A widget released (or pooled) since queueing has no parent chain of
+        -- its own any more; its push is meaningless, skip it.
+        if push[1].parent then
+            ApplyFitPush(push[1], push[2], layoutQueue, layoutSeen)
+        end
+    end
+    if batched and UI.ResumeLayout then UI:ResumeLayout() end
+    for _, container in ipairs(layoutQueue) do
+        container:DoLayout()
+    end
+end)
+local function QueueFitPush(macroEditBox, delta)
+    pendingFitPushes[#pendingFitPushes + 1] = { macroEditBox, delta }
+    fitFlushDriver:Show()
+end
+local function FitMacroEditBoxToContent(macroEditBox, text)
+    if not (macroEditBox and macroEditBox.SetHeight) then return end
+    local eb = macroEditBox.editBox or macroEditBox.editbox
+    if not eb then return end
+    local plain = text or ""
+    if GSE.DecodeMacroEditorText then plain = GSE.DecodeMacroEditorText(plain) or plain end
+    plain = tostring(plain)
+    -- Stored macro text commonly ends with a newline; that trailing newline is
+    -- not a row the author sees as content, so it is not measured -- EXCEPT
+    -- while the author is typing on that last empty row (box focused, caret at
+    -- the end), so pressing Enter at the bottom still opens the new row.
+    local body = plain:gsub("\n+$", "")
+    local typingOnTrailingRow = #body < #plain and eb.HasFocus and eb:HasFocus()
+        and eb.GetCursorPosition and eb.GetText and eb:GetCursorPosition() >= #(eb:GetText() or "")
+
+    -- MEASURE the rendered text height with a hidden FontString in the box's
+    -- own font (wraps included) instead of estimating rows x font size --
+    -- estimates drifted by about a row and showed a spare empty line.
+    local meter = macroBoxHeightMeters[macroEditBox.frame]
+    if not meter then
+        meter = macroEditBox.frame:CreateFontString(nil, "ARTWORK")
+        meter:Hide()
+        macroBoxHeightMeters[macroEditBox.frame] = meter
+    end
+    local fontPath, fontSize, fontFlags = eb:GetFont()
+    if fontPath then meter:SetFont(fontPath, fontSize or 14, fontFlags or "") end
+    local spacing = (eb.GetSpacing and eb:GetSpacing()) or 0
+    if meter.SetSpacing then meter:SetSpacing(spacing) end
+    meter:SetWordWrap(true)
+    local width = eb:GetWidth() or 0
+    meter:SetWidth(width > 50 and width or 600)
+    meter:SetText("X")
+    local oneRow = meter:GetStringHeight() or (fontSize or 14)
+    if oneRow <= 0 then oneRow = fontSize or 14 end
+    meter:SetText(body ~= "" and body or "X")
+    local textHeight = meter:GetStringHeight() or oneRow
+    if typingOnTrailingRow then textHeight = textHeight + oneRow + spacing end
+    -- The box fits its content, so its scrollbar is dead weight: hide it. (A
+    -- 255-char block cannot realistically reach the row cap; one that did needs
+    -- rethinking, not a scrollbar.)
+    local bar = macroEditBox.scrollBar
+    if bar and bar.Hide then
+        bar:Hide()
+        -- The scroll template re-Shows the bar whenever the text's scroll
+        -- range changes (SetText on a reused box, typing past the cap...).
+        -- A one-time Hide loses that race, so make Show itself hide: the bar
+        -- stays dead for the widget's whole life, pooled reuses included.
+        if not bar.gseHardHidden then
+            bar.gseHardHidden = true
+            bar.Show = bar.Hide
+        end
+    end
+    textHeight =
+        math.max(
+            MacroBoxRowsHeight(MACRO_BOX_MIN_LINES, oneRow, spacing),
+            math.min(MacroBoxRowsHeight(MACRO_BOX_MAX_LINES, oneRow, spacing), textHeight)
+        )
+    textHeight = math.max(textHeight, MACRO_BOX_MIN_INNER - MACRO_BOX_CHROME_SLACK)
+
+    local chrome =
+        (macroEditBox.labelHeight or 12) + (macroEditBox.verticalOffset or 2) * 3 + MACRO_BOX_CHROME_SLACK
+    local newHeight = math.ceil(textHeight + chrome)
+    -- The no-op check must also verify the FRAME still holds that height: a
+    -- later layout pass can shrink the frame while gseFitHeight remembers the
+    -- correct number, and then every subsequent fit -- typing included --
+    -- computed the same value, matched the cache, and returned without
+    -- repairing the frame. (Repro: the LAST block of a version drew at
+    -- baseline height and nothing would ever grow it.)
+    if macroEditBox.gseFitHeight == newHeight then
+        local frameHeight = macroEditBox.frame and macroEditBox.frame.GetHeight
+            and macroEditBox.frame:GetHeight() or 0
+        if math.abs(frameHeight - newHeight) < 1 then return end
+    end
+    macroEditBox.gseFitHeight = newHeight
+    local delta = newHeight - (macroEditBox.height or newHeight)
+    macroEditBox:SetHeight(newHeight)
+    -- The box sits under several EXPLICIT-height containers (macrolayout,
+    -- macroFields, macroBody -- sized at draw time); auto-height ancestors
+    -- above them only follow if those grow too. Push the delta up through
+    -- every fixed-height ancestor, relaying out as we go.
+    QueueFitPush(macroEditBox, delta)
+end
+
 local function SetMacroCountText(macroEditBox, lenMacro)
     if not (macroEditBox and macroEditBox.frame) then return end
 
@@ -882,18 +1046,35 @@ local function RefreshMacroEditorColoredText(widget, plainText, onlyIfNoVisibleC
     widget.GSEMacroEditorColoring = true
     if editBox then editBox.GSEMacroEditorColoring = true end
     widget:SetText(displayText)
-    -- Defer cursor restore to the next frame so WoW's internal post-SetText
-    -- caret handling (scroll/layout recalculation done in C after Lua returns)
-    -- runs first and our SetCursorPosition wins. Same pattern as
-    -- Export.lua:351 and DebugWindow.lua:2799.
+    -- Restore the caret IMMEDIATELY after SetText. SetText parks the caret at
+    -- the end of the text; if a frame renders before it is moved back, the
+    -- caret (and the scroll view chasing it) visibly jumps to the end of the
+    -- bottom line and back on every live repaint, and a fast follow-up key
+    -- acts at the end of the text. A synchronous restore in the same Lua
+    -- frame closes that window (the SetText+SetCursorPosition-in-one-go
+    -- approach IndentationLib has used for years).
+    --
+    -- The deferred restore is kept ONLY as a backstop for a client where the
+    -- synchronous one is overridden by WoW's post-SetText handling, and it
+    -- must never fight a newer keystroke: it is scheduled only when the
+    -- immediate restore visibly did not take, and it re-checks that the text
+    -- is still the text it was computed for before touching the caret.
+    -- (With an unconditional deferred restore, typing/deleting fast yanked
+    -- the caret back to a stale position one frame later.)
     if editBox and editBox.SetCursorPosition and editBox.HasFocus and editBox:HasFocus() then
-        local capturedBox    = editBox
-        local capturedCursor = newCursor
-        C_Timer.After(0, function()
-            if capturedBox and capturedBox.SetCursorPosition then
-                capturedBox:SetCursorPosition(capturedCursor)
-            end
-        end)
+        editBox:SetCursorPosition(newCursor)
+        local took = editBox.GetCursorPosition and editBox:GetCursorPosition() == newCursor
+        if not took then
+            local capturedBox    = editBox
+            local capturedCursor = newCursor
+            local capturedText   = displayText
+            C_Timer.After(0, function()
+                if capturedBox and capturedBox.SetCursorPosition
+                    and capturedBox.GetText and capturedBox:GetText() == capturedText then
+                    capturedBox:SetCursorPosition(capturedCursor)
+                end
+            end)
+        end
     end
     if editBox then editBox.GSEMacroEditorColoring = nil end
     widget.GSEMacroEditorColoring = nil
@@ -941,6 +1122,12 @@ local FORM_SPELL_IDS = {
     [40120] = true, -- Swift Flight Form
     [114282] = true, -- Treant Form
     [165961] = true, -- Stag Form
+    -- Stealth states: sit on the stance bar exactly like stances/forms do.
+    -- A management line like "/cast [nostealth] Stealth; [stealth,nocombat]
+    -- Sprint" resolves to "Stealth" when unstealthed and stole the block
+    -- icon from the real ability below it.
+    [1784]   = true, -- Stealth (Rogue)
+    [5215]   = true, -- Prowl (Druid)
     -- Pet summoning slots: treated the same as forms/stances. A line like
     -- /cast Call Pet 1 should not steal the action icon unless it is the
     -- only valid candidate in the macro block.
@@ -967,6 +1154,7 @@ local function isFormSpellCandidate(value)
 
     local lowerCandidate = strlower(candidate)
     return lowerCandidate == "ghost wolf" or lowerCandidate == "tree of life" or
+        lowerCandidate == "stealth" or lowerCandidate == "prowl" or
         lowerCandidate:match("%f[%a]form%f[%A]") ~= nil or
         lowerCandidate:match("%f[%a]stance%f[%A]") ~= nil or
         -- "Call Pet", "Call Pet 1" ... "Call Pet 5"
@@ -1605,6 +1793,18 @@ function GSE.HydrateClassActionIcons(classid)
     end
 end
 
+-- One sequence's worth of the hydration below. This is what the editor
+-- actually needs -- the icons for the sequence on screen -- and it is called
+-- as each sequence is opened rather than sweeping the library on every open.
+local function hydrateSequenceIcons(sequence)
+    if type(sequence) ~= "table" or type(sequence.Versions) ~= "table" then return end
+    for _, versionData in ipairs(sequence.Versions) do
+        if type(versionData) == "table" then
+            hydrateActionIcons(versionData.Actions)
+        end
+    end
+end
+
 function GSE.HydrateLoadedSequenceActionIcons(scanStats, saveChanges)
     if type(GSE.Library) ~= "table" then return 0, 0, 0 end
 
@@ -1813,6 +2013,33 @@ end
 -- GSE.SaveAllSequenceActionIcons) through the GSE.* namespace.
 
 
+-- Menu-only candidate source: enumerate EVERY conditional branch of a cast
+-- line, ignoring whether its conditionals are true right now. The live
+-- resolver (SecureCmdOptionParse) intentionally drops branches whose
+-- conditionals currently fail, so out of combat a "/cast [combat] Shuriken
+-- Storm" contributed nothing and the Select Icon menu never offered it —
+-- while castsequence lines (enumerated element-wise) offered everything.
+-- The auto-icon keeps using the live resolver; this is just for the menu.
+local function getAllConditionalBranchSpells(line)
+    local cmd, etc = string.match(line or "", "^%s*/(%w+)%s+([^\n]+)")
+    if not cmd or not etc then return nil end
+    cmd = strlower(cmd)
+    if not Statics.CastCmds[cmd] or cmd == "castsequence" then return nil end
+
+    local candidates = {}
+    for _, clause in ipairs(GSE.split(etc, ";")) do
+        local _, _, body = GSE.GetConditionalsFromString(clause)
+        body = trimIconCandidate(body or "")
+        if body ~= "" and not tonumber(body) then
+            local ok, info = pcall(GSE.GetSpellInfo, body)
+            if ok and type(info) == "table" and info.iconID then
+                table.insert(candidates, info)
+            end
+        end
+    end
+    if #candidates > 0 then return candidates end
+end
+
 function GSE.CreateIconControl(action, version, keyPath, sequence, frame)
     local iconSize = 28
     local lbl = UI:Create("Icon")
@@ -1876,6 +2103,7 @@ function GSE.CreateIconControl(action, version, keyPath, sequence, frame)
             local lines = GSE.SplitMeIntoLines(macro)
             for _, v in ipairs(lines) do
                 addIconMenuCandidates(spellinfolist, GSE.GetSpellsFromString(v, true))
+                addIconMenuCandidates(spellinfolist, getAllConditionalBranchSpells(v))
                 addIconMenuCandidates(spellinfolist, getMacroLineFallbackIconInfo(v))
             end
         else
@@ -3068,6 +3296,12 @@ function GSE.CreateEditor()
         editframe.pendingScrollRestore = nil
         local batchLayout = not _G.GSE_NoLayoutBatch
         if batchLayout and UI and UI.SuspendLayout then UI:SuspendLayout() end
+        -- Paired with the report in finishDraw. Same reasoning as ManageTree's:
+        -- block count and elapsed time are what turn "the editor freezes" into a
+        -- number. Silent unless the Editor debug module is on.
+        --@debug@
+        local drawStartedAt = GSE.NowMs()
+        --@end-debug@
         editframe.rawEditor = nil
         SetOuterEditorScrollBarEnabled(true)
         if tcontainer.SetListPadding then
@@ -4655,6 +4889,14 @@ function GSE.CreateEditor()
             return layoutcontainer, finalizeToolbar, CreateAddButtonRow, CreateChildAddButtonRow
         end
         local function drawAction(pcontainer, action, version, keyPath, treepath)
+            -- Counted against CountActionBlocks below. The chunk-vs-synchronous
+            -- gate trusts that count, so if it undercounts, a big sequence
+            -- silently skips chunking and builds every block in one frame --
+            -- exactly the freeze the chunking exists to prevent. Divergence
+            -- between the two numbers is the tell.
+            --@debug@
+            editframe.lastDrawnBlocks = (editframe.lastDrawnBlocks or 0) + 1
+            --@end-debug@
             local function drawChild(childContainer, childAction, childKeyPath, childTreepath)
                 local q = editframe.incBuildQueue
                 if q then
@@ -4764,7 +5006,7 @@ function GSE.CreateEditor()
                 clicksdropdown:SetLabel(L["Measure"])
                 clicksdropdown:SetWidth(270)
                 local clickdroplist = {
-                    [L["Clicks"]] = L["How many macro Clicks to pause for?"],
+                    [L["Clicks"]] = L["How many clicks of this sequence to pause for?"],
                     [L["Milliseconds"]] = L["How many milliseconds to pause for?"],
                     ["GCD"] = L["Pause for the GCD."]
                 }
@@ -5128,6 +5370,8 @@ function GSE.CreateEditor()
 			local macrolayout = UI:Create("SimpleGroup")
 			macrolayout:SetLayout("Flow")
 			macrolayout:SetFullWidth(true)
+			-- 108 == a MACRO_BOX_BASE_LINES-row macro box (SetNumLines: rows * 16 +
+			-- frameContentTop); the auto-fit measures its delta from that pairing.
 			macrolayout:SetHeight(108)
 			if macrolayout.SetFlowOffset then macrolayout:SetFlowOffset(0, 4) end
 			if macrolayout.SetFlowPadding then macrolayout:SetFlowPadding(4, 0, 4, 0) end
@@ -5191,6 +5435,27 @@ function GSE.CreateEditor()
 			macroFields:AddChild(macrolayout)
 			macroBody:AddChild(macroRail)
 			macroBody:AddChild(macroFields)
+			-- Fit the macro box to its content now that it sits under its containers:
+			-- the fit pushes the height delta up through macrolayout/macroFields/
+			-- macroBody (all explicit-height, sized above for the 108px baseline).
+			FitMacroEditBoxToContent(macroeditbox, macroeditbox:GetText())
+			-- Keep the action icon vertically centred on the macro box as the box
+			-- resizes: anchor the icon's centre to the box's left edge -- a live WoW
+			-- anchor follows every height change with no per-resize math -- and
+			-- re-apply it after any re-layout of the icon slot, which would
+			-- otherwise snap the icon back to its static slot position.
+			local function centreIconOnMacroBox()
+				local target = macroeditbox and (macroeditbox.scrollBG or macroeditbox.frame)
+				if not (actionicon and actionicon.frame and target) then return end
+				actionicon.frame:ClearAllPoints()
+				actionicon.frame:SetPoint("CENTER", target, "LEFT", -(macroRailWidth / 2 + 6), 0)
+			end
+			local slotDoLayout = iconSlot.DoLayout
+			iconSlot.DoLayout = function(self, ...)
+				if slotDoLayout then slotDoLayout(self, ...) end
+				centreIconOnMacroBox()
+			end
+			centreIconOnMacroBox()
 			spellcontainer:AddChild(macroBody)
 			-- Report the COMPILED macro body length (after spell-name translation)
 			-- so the "X/255" indicator matches the over-limit trigger and what WoW
@@ -5406,7 +5671,7 @@ function GSE.CreateEditor()
                         GSE.CreateToolTip(
                             L["Step Function"],
                             L[
-                                "The step function determines how your macro executes.  Each time you click your macro GSE will go to the next line.  \nThe next line it chooses varies.  If Random then it will choose any line.  If Sequential it will go to the next line.  \nIf Priority it will try some spells more often than others."
+                                "The step function determines how your sequence executes.  Each time you click your sequence GSE will go to the next line.  \nThe next line it chooses varies.  If Random then it will choose any line.  If Sequential it will go to the next line.  \nIf Priority it will try some spells more often than others."
                             ],
                             editframe
                         )
@@ -5760,6 +6025,15 @@ function GSE.CreateEditor()
 
         local function finishDraw()
             if tcontainer.DoLayout then tcontainer:DoLayout() end
+            --@debug@
+            GSE.PrintDebugMessage(
+                string.format("DrawSequenceEditor: %d blocks counted, %d drawn, %s, in %.0f ms",
+                    editframe.lastDrawBlockCount or 0, editframe.lastDrawnBlocks or 0,
+                    (editframe.lastDrawBlockCount or 0) > 12 and "chunked" or "one frame",
+                    GSE.NowMs() - drawStartedAt),
+                Statics.DebugModules["Editor"]
+            )
+            --@end-debug@
             if editframe.scrollContainer and editframe.scrollContainer.DoLayout then
                 editframe.scrollContainer:DoLayout()
                 if editframe.scrollContainer.SetScroll then
@@ -5792,6 +6066,10 @@ function GSE.CreateEditor()
             return n
         end
         local totalBlocks = CountActionBlocks(macro)
+        --@debug@
+        editframe.lastDrawBlockCount = totalBlocks
+        editframe.lastDrawnBlocks = 0
+        --@end-debug@
 
         local INCREMENTAL_MIN_BLOCKS = 12
         if not (C_Timer and C_Timer.After) or totalBlocks <= INCREMENTAL_MIN_BLOCKS then
@@ -5926,18 +6204,51 @@ function GSE.CreateEditor()
                 local sequence = editframe.Sequence
                 if #sequence.Versions <= 1 then
                     GSE.Print(
-                        L["This is the only version of this macro.  Delete the entire macro to delete this version."]
+                        L["This is the only version of this sequence.  Delete the entire sequence to delete this version."]
                     )
                     return
                 end
                 if sequence.MetaData.Default == version then
                     GSE.Print(
                         L[
-                            "You cannot delete the Default version of this macro.  Please choose another version to be the Default on the Configuration tab."
+                            "You cannot delete the Default version of this sequence.  Please choose another version to be the Default on the Configuration tab."
                         ]
                     )
                     return
                 end
+
+                -- A context override pointing AT this version blocks the delete
+                -- the same way Default does. Silently repointing it at Default
+                -- (what this used to do) changes which macro fires in that
+                -- context without telling the author — they set Raid to version
+                -- 4 deliberately. Make them repoint it first. The key list and
+                -- the rule live in Storage.lua, derived from
+                -- contextVersionPriority, so the editor cannot drift from the
+                -- runtime's idea of which contexts exist.
+                local blocking = GSE.VersionReferencesInUse(sequence.MetaData, version)
+                if #blocking > 0 then
+                    -- Name each context the way the Configuration tab labels it,
+                    -- not by its raw MetaData key. "Point MythicPlus at another
+                    -- version" sent the author looking for a row that reads
+                    -- "Mythic+", and "PVP" for one that read "Solo" (#2023).
+                    local blockingLabels = {}
+                    for _, contextKey in ipairs(blocking) do
+                        local label = contextKey == "Default" and "Default"
+                            or GSE.GetContextVersionLabel(contextKey)
+                        blockingLabels[#blockingLabels + 1] = L[label] or label
+                    end
+                    GSE.Print(
+                        string.format(
+                            L["Version %d is in use by: %s.  Point %s at another version on the Configuration tab before deleting this one."],
+                            version,
+                            table.concat(blockingLabels, ", "),
+                            #blocking == 1 and L["it"] or L["them"]
+                        ),
+                        Statics.DebugModules["Editor"]
+                    )
+                    return
+                end
+
                 GSE.UI.ShowConfirmDialog({
                     owner       = editframe,
                     title       = L["Delete Version"],
@@ -5951,114 +6262,12 @@ function GSE.CreateEditor()
                     confirmText = L["Delete"],
                     cancelText  = L["Cancel"],
                     onConfirm   = function()
-                    local printtext = L["Macro Version %d deleted."]
-                    if sequence.MetaData.PVP == version then
-                        sequence.MetaData.PVP = sequence.MetaData.Default
-                        printtext = printtext .. " " .. L["PVP setting changed to Default."]
-                    end
-                    if sequence.MetaData.Arena == version then
-                        sequence.MetaData.Arena = sequence.MetaData.Default
-                        printtext = printtext .. " " .. L["Arena setting changed to Default."]
-                    end
-                    if sequence.MetaData.Raid == version then
-                        sequence.MetaData.Raid = sequence.MetaData.Default
-                        printtext = printtext .. " " .. L["Raid setting changed to Default."]
-                    end
-                    if sequence.MetaData.Mythic == version then
-                        sequence.MetaData.Mythic = sequence.MetaData.Default
-                        printtext = printtext .. " " .. L["Mythic setting changed to Default."]
-                    end
-                    if sequence.MetaData.Heroic == version then
-                        sequence.MetaData.Heroic = sequence.MetaData.Default
-                        printtext = printtext .. " " .. L["Heroic setting changed to Default."]
-                    end
-                    if sequence.MetaData.Dungeon == version then
-                        sequence.MetaData.Dungeon = sequence.MetaData.Default
-                        printtext = printtext .. " " .. L["Dungeon setting changed to Default."]
-                    end
-                    if sequence.MetaData.Party == version then
-                        sequence.MetaData.Party = sequence.MetaData.Default
-                        printtext = printtext .. " " .. L["Party setting changed to Default."]
-                    end
-                    if sequence.MetaData.MythicPlus == version then
-                        sequence.MetaData.MythicPlus = sequence.MetaData.Default
-                        printtext = printtext .. " " .. L["Mythic+ setting changed to Default."]
-                    end
-                    if sequence.MetaData.Timewalking == version then
-                        sequence.MetaData.Timewalking = sequence.MetaData.Default
-                        printtext = printtext .. " " .. L["Timewalking setting changed to Default."]
-                    end
-                    if sequence.MetaData.Scenario == version then
-                        sequence.MetaData.Scenario = sequence.MetaData.Default
-                        printtext = printtext .. " " .. L["Delves and Scenarios setting changed to Default."]
-                    end
+                    local printtext = L["Sequence Version %d deleted."]
 
-                    if sequence.MetaData.Default > 1 then
-                        sequence.MetaData.Default = tonumber(sequence.MetaData.Default) - 1
-                    else
-                        sequence.MetaData.Default = 1
-                    end
+                    -- Only references after the deleted version move; see
+                    -- GSE.ShiftVersionReferencesAfterDelete for the three cases.
+                    GSE.ShiftVersionReferencesAfterDelete(sequence.MetaData, version)
 
-                    if
-                        not GSE.isEmpty(sequence.MetaData.PVP) and sequence.MetaData.PVP > 1 and
-                            sequence.MetaData.PVP >= version
-                     then
-                        sequence.MetaData.PVP = tonumber(sequence.MetaData.PVP) - 1
-                    end
-                    if
-                        not GSE.isEmpty(sequence.MetaData.Arena) and sequence.MetaData.Arena > 1 and
-                            sequence.MetaData.Arena >= version
-                     then
-                        sequence.MetaData.Arena = tonumber(sequence.MetaData.Arena) - 1
-                    end
-                    if
-                        not GSE.isEmpty(sequence.MetaData.Raid) and sequence.MetaData.Raid > 1 and
-                            sequence.MetaData.Raid >= version
-                     then
-                        sequence.MetaData.Raid = tonumber(sequence.MetaData.Raid) - 1
-                    end
-                    if
-                        not GSE.isEmpty(sequence.MetaData.Mythic) and sequence.MetaData.Mythic > 1 and
-                            sequence.MetaData.Mythic >= version
-                     then
-                        sequence.MetaData.Mythic = tonumber(sequence.MetaData.Mythic) - 1
-                    end
-                    if
-                        not GSE.isEmpty(sequence.MetaData.MythicPlus) and sequence.MetaData.MythicPlus > 1 and
-                            sequence.MetaData.MythicPlus >= version
-                     then
-                        sequence.MetaData.MythicPlus = tonumber(sequence.MetaData.MythicPlus) - 1
-                    end
-                    if
-                        not GSE.isEmpty(sequence.MetaData.Timewalking) and sequence.MetaData.Timewalking > 1 and
-                            sequence.MetaData.Timewalking >= version
-                     then
-                        sequence.MetaData.Timewalking = tonumber(sequence.MetaData.Timewalking) - 1
-                    end
-                    if
-                        not GSE.isEmpty(sequence.MetaData.Heroic) and sequence.MetaData.Heroic > 1 and
-                            sequence.MetaData.Heroic >= version
-                     then
-                        sequence.MetaData.Heroic = tonumber(sequence.MetaData.Heroic) - 1
-                    end
-                    if
-                        not GSE.isEmpty(sequence.MetaData.Dungeon) and sequence.MetaData.Dungeon > 1 and
-                            sequence.MetaData.Dungeon >= version
-                     then
-                        sequence.MetaData.Dungeon = tonumber(sequence.MetaData.Dungeon) - 1
-                    end
-                    if
-                        not GSE.isEmpty(sequence.MetaData.Party) and sequence.MetaData.Party > 1 and
-                            sequence.MetaData.Party >= version
-                     then
-                        sequence.MetaData.Party = tonumber(sequence.MetaData.Party) - 1
-                    end
-                    if
-                        not GSE.isEmpty(sequence.MetaData.Scenario) and sequence.MetaData.Scenario > 1 and
-                            sequence.MetaData.Scenario >= version
-                     then
-                        sequence.MetaData.Scenario = tonumber(sequence.MetaData.Scenario) - 1
-                    end
                     table.remove(sequence.Versions, version)
 
                     -- Mirror the deletion into the Library display cache so the
@@ -6075,18 +6284,14 @@ function GSE.CreateEditor()
                             table.remove(libSeq.Versions, version)
                             if libSeq.MetaData then
                                 libSeq.MetaData.Default = sequence.MetaData.Default
-                                local contextKeys = {
-                                    "Raid", "Arena", "Mythic", "MythicPlus", "PVP",
-                                    "Heroic", "Dungeon", "Timewalking", "Party", "Scenario",
-                                }
-                                for _, ck in ipairs(contextKeys) do
+                                for _, ck in ipairs(GSE.GetContextVersionKeys()) do
                                     libSeq.MetaData[ck] = sequence.MetaData[ck]
                                 end
                             end
                         end
                     end
 
-                    printtext = printtext .. " " .. L["This change will not come into effect until you save this macro."]
+                    printtext = printtext .. " " .. L["This change will not come into effect until you save this sequence."]
                     editframe.ManageTree()
                     treeContainer:SelectByValue(path)
                     editframe:SetStatusText(string.format(printtext, version))
@@ -6106,7 +6311,7 @@ function GSE.CreateEditor()
                 GSE.CreateToolTip(
                     L["Delete Version"],
                     L[
-                        "Delete this version of the macro.  This can be undone by closing this window and not saving the change.  \nThis is different to the Delete button below which will delete this entire macro."
+                        "Delete this version of the sequence.  This can be undone by closing this window and not saving the change.  \nThis is different to the Delete button below which will delete this entire sequence."
                     ],
                     editframe
                 )
@@ -6151,7 +6356,7 @@ function GSE.CreateEditor()
                 GSE.CreateToolTip(
                     L["Raw Edit"],
                     L[
-                        "Edit this macro directly in Lua. WARNING: This may render the macro unable to operate and can crash your Game Session."
+                        "Edit this sequence directly in Lua. WARNING: This may render the sequence unable to operate and can crash your Game Session."
                     ],
                     editframe
                 )
@@ -6180,7 +6385,7 @@ function GSE.CreateEditor()
         previewMacro:SetCallback(
             "OnEnter",
             function()
-                GSE.CreateToolTip(L["Compiled Template"], L["Show the compiled version of this macro."], editframe)
+                GSE.CreateToolTip(L["Compiled Template"], L["Show the compiled version of this sequence."], editframe)
             end
         )
         previewMacro:SetCallback(
@@ -7327,7 +7532,7 @@ function GSE.CreateEditor()
             DisableMultilineEditorColoring(macroEditBox)
             macroEditBox:SetLabel(L["Macro Name or Macro Commands"])
             macroEditBox:DisableButton(true)
-            macroEditBox:SetNumLines(5)
+            macroEditBox:SetNumLines(MACRO_BOX_BASE_LINES)
             macroEditBox:SetRelativeWidth(0.5)
             macroEditBox:SetText(spelltext)
             ForwardMacroEditorMouseWheel(macroEditBox, frame)
@@ -7406,13 +7611,24 @@ function GSE.CreateEditor()
                         compiledMacro:SetText(body)
                         if compiledMacro.parent and compiledMacro.parent.DoLayout then compiledMacro.parent:DoLayout() end
                     end
-                    SetMacroCountText(macroEditBox, GSE.GetMacroEditorTextLength(value or ""))
+                    -- COMPILED length, same ruler as the over-limit backdrop and
+                    -- the Save gate (and as the draw-time count). Counting the raw
+                    -- display text here let the counter drop under 255 while the
+                    -- compiled body stayed over -- so Save "never un-greyed".
+                    SetMacroCountText(macroEditBox, GetCompiledMacroBodyLength(storedMacro))
+                    FitMacroEditBoxToContent(macroEditBox, value)
                     UpdateMacroLimitState(macroEditBox, sequence.Versions[version].Actions[keyPath].macro, editframe, version)
                 end
             )
             macroEditBox:SetCallback(
                 "OnEditFocusLost",
                 function(sel)
+                    -- During a Tab line-builder session the commit repaint would
+                    -- inject colour codes mid-build and shift the session's raw
+                    -- caret offsets; the session suppresses it and it runs on the
+                    -- next real focus-loss after the menu is gone.
+                    local eb = sel and (sel.editBox or sel.editbox)
+                    if eb and (eb.gseTabSessionUntil or 0) > GetTime() then return end
                     -- Apply translation + coloring on focus-loss, not every
                     -- keystroke. See matching comment in MacroToolbar.lua.
                     -- Cancel any pending debounced live pass so it can't fire
@@ -7425,6 +7641,24 @@ function GSE.CreateEditor()
                     end
                 end
             )
+            -- QoL Tab spell list (Patron): pop the Insert Spell / Insert GSE
+            -- Variable menu on Tab. The spell field applies via SetText so its
+            -- own OnTextChanged stores the value; the macro box inserts at the
+            -- cursor and its OnTextChanged owns storage. No-ops when GSE_QoL
+            -- is not loaded. Pass `frame` (the CURRENT editor's frame, supplied
+            -- by the caller) -- not editframe.frame: this factory is defined
+            -- once inside the first editor ever created, so that upvalue is
+            -- the FIRST editor's frame forever. After the editor is re-created
+            -- it is hidden, and Blizzard refuses to open a context menu on a
+            -- hidden owner -- the Tab menu silently stopped appearing.
+            if GSE.OnEditorSpellTab then
+                GSE.OnEditorSpellTab(spellEditBox, frame, function(value)
+                    spellEditBox:SetText(value)
+                end)
+            end
+            if GSE.OnEditorMacroBlockTab then
+                GSE.OnEditorMacroBlockTab(macroEditBox, frame)
+            end
             return spellEditBox, macroEditBox
         end
     end
@@ -7477,97 +7711,188 @@ function GSE.CreateEditor()
     return editframe
 end
 
-function GSE.ShowSequences()
-    if not InCombatLockdown() or (GSE.PlayerSpellsLoaded and GSE.PlayerSpellsLoaded()) then
-        local editframe = GSE.CreateEditor()
-        editframe.ManageTree()
-        if GSE.HydrateLoadedSequenceActionIcons then GSE.HydrateLoadedSequenceActionIcons() end
-        local lastSequencePath = GSE.GUI.GetLastSequenceEditorPath and GSE.GUI.GetLastSequenceEditorPath()
-        local classID = tostring(GSE.GetCurrentClassID and GSE.GetCurrentClassID() or "")
-
-        -- Restore the last-opened sequence. In "show all classes" mode the tree
-        -- shows every class, so restore it regardless of the class/spec the player
-        -- is currently on. In current-class mode the tree only shows the current
-        -- class, so only restore the path when it belongs to the current class
-        -- (otherwise it would not be visible); fall back to the current class.
-        -- Paths look like "Sequences\001<classID>\001..." so check segment 2.
-        local showingAllClasses = GSEOptions and GSEOptions.filterList and GSEOptions.filterList[Statics.All]
-        if lastSequencePath and not showingAllClasses then
-            local parts = {("\001"):split(lastSequencePath)}
-            local pathClass = parts[2] and tostring(parts[2]) or ""
-            if pathClass ~= classID then
-                lastSequencePath = nil   -- wrong class, fall back to current class
-            end
-        end
-
-        local selectPath = lastSequencePath or "Sequences\001NewSequence"
-        local treeStatus = editframe.treeContainer.status or editframe.treeContainer.localstatus
-
-        -- Attached opening rules: when the tree is DETACHED, a newly opened editor
-        -- opens to wherever the detached tree is already working (e.g. DK Sequence 1)
-        -- instead of refreshing the tree to the normal current-class/last sequence.
-        -- It mirrors the detached tree's expansion + scroll and selects that node
-        -- silently, so opening the window does not refresh or jump the floating menu.
-        local adopted = false
-        if GSE.GUI.navDetached and GSE.GUI.floatOwner and GSE.GUI.floatOwner ~= editframe then
-            local srcTree   = GSE.GUI.floatOwner.treeContainer
-            local srcStatus = srcTree and (srcTree.status or srcTree.localstatus)
-            if srcStatus and srcStatus.selected then
-                -- Mirror expansion + scroll (copy the table, don't share the reference)
-                treeStatus.groups = treeStatus.groups or {}
-                for k in pairs(treeStatus.groups) do treeStatus.groups[k] = nil end
-                for k, v in pairs(srcStatus.groups or {}) do treeStatus.groups[k] = v end
-                treeStatus.scrollvalue = srcStatus.scrollvalue or 0
-                -- Open to the detached tree's current node, silently: SetSelected loads
-                -- the editor content via OnGroupSelected without expanding/RefreshTree.
-                editframe.forceTreeSelection = true
-                if editframe.treeContainer.SetSelected then
-                    editframe.treeContainer:SetSelected(srcStatus.selected)
-                end
-                -- One-shot: stop SyncTrees from RevealSelection-refreshing this tree
-                -- when the float follows to it (its menu already matches the source).
-                editframe.treeContainer.skipNextReveal = true
-                adopted = true
-            end
-        end
-
-        if not adopted then
-            treeStatus.groups["Sequences"] = true
-            if classID ~= "" then
-                treeStatus.groups["Sequences\001" .. classID] = true
-            end
-            -- Also expand the class that owns the sequence we are selecting, so a
-            -- last sequence on a different class (All-classes mode) is revealed.
-            if lastSequencePath then
-                local lp = {("\001"):split(lastSequencePath)}
-                if lp[2] and lp[2] ~= "" then
-                    treeStatus.groups["Sequences\001" .. tostring(lp[2])] = true
-                end
-            end
-            if GSE.GUI.SelectEditorTreePath then
-                GSE.GUI.SelectEditorTreePath(editframe, selectPath)
-            else
-                editframe.treeContainer:SelectByValue(selectPath)
-            end
-        end
-
-        -- Restore last non-sequence area (Variables, Macros, Keybindings) if that was last open
-        local seOpts = GSEOptions and GSEOptions.frameLocations and GSEOptions.frameLocations.sequenceeditor
-        local lastArea = seOpts and seOpts.lastArea
-        if lastArea and lastArea ~= "Sequences" and editframe.RestoreLastNode then
-            C_Timer.After(0.1, function() editframe.RestoreLastNode() end)
-        end
-
-        SetSequenceEditorOpenPreference(true, "sequences")
-        editframe:Show()
+-- An open this slow is a defect, not a preference, so it is reported to the
+-- user even with debug off -- once, with the numbers needed to act on it.
+-- Below the threshold it stays on the debug module like every other timing.
+--@debug@
+local EDITOR_SLOW_OPEN_MS = 2000
+local function ReportOpenTiming(message, elapsed)
+    if elapsed and elapsed > EDITOR_SLOW_OPEN_MS then
+        GSE.Print(message, Statics.DebugModules["Editor"])
     else
-        GSE.Print(
-            L[
-                "You cannot open a new Sequence Editor window while you are in combat.  Please exit combat and then try again."
-            ],
-            Statics.DebugModules["Editor"]
-        )
+        GSE.PrintDebugMessage(message, Statics.DebugModules["Editor"])
     end
+end
+
+--@end-debug@
+
+function GSE.ShowSequences()
+    -- End-to-end open cost. ManageTree and DrawSequenceEditor time themselves;
+    -- this brackets everything, so a gap between them and this total says the
+    -- time is going somewhere neither of those covers -- which is exactly how
+    -- the whole-library icon scan below was found (14ms + 123ms inside a
+    -- seventeen second open).
+    --@debug@
+    local openStartedAt = GSE.NowMs()
+    --@end-debug@
+    local editframe = GSE.CreateEditor()
+    --@debug@
+    local afterCreate = GSE.NowMs()
+    --@end-debug@
+    -- The tree build moved BELOW the expansion/selection restore: version
+    -- children are built lazily (versionsWanted reads the tree's expanded +
+    -- selected state), so building here -- before that state is restored --
+    -- gave the restored sequence a node with Configuration and New Version but
+    -- NO version children. The expand-click rebuild never fires on restore.
+    --
+    -- Its timestamps move with it, to the call sites below. Left here they
+    -- bracketed nothing and reported ManageTree as 0 ms while its real cost
+    -- went silently into the select+show bucket -- and this instrumentation
+    -- exists precisely to say which of the three is responsible for a slow
+    -- open. Seeded to afterCreate so the arithmetic is still safe on any path
+    -- that somehow reaches the report without building (there is none today).
+    -- The restore work in between belongs to neither bucket, so it shows up as
+    -- the gap between the three numbers and the total, which is what the
+    -- comment above openStartedAt says to read that gap as.
+    --@debug@
+    local beforeTree, afterTree = afterCreate, afterCreate
+    --@end-debug@
+    -- The whole-library icon hydration used to run HERE, on every open, and it
+    -- was the freeze: it force-loads every class (GSE.EnsureClassLoaded ->
+    -- DecodeMessage per sequence, i.e. decompress + deserialise the entire
+    -- library) and then walks every action of every version of every sequence
+    -- resolving icons, synchronously, before the window appears. A large
+    -- library made that seventeen seconds -- with ManageTree at 14ms and the
+    -- block draw at 123ms on the same open, so all of it was this.
+    --
+    -- Nothing on screen needs it: the tree carries sequence icons, not action
+    -- icons, and it built fine before this ran. Action icons are needed only
+    -- for the sequence actually being drawn, so hydration moved to
+    -- GSE.GUILoadEditor, per sequence, as each one is opened. That also
+    -- restores the lazy-load design this pass was defeating -- every other
+    -- read path uses GSE.EnsureSequenceLoaded for one sequence at a time.
+    --
+    -- The full-library pass is still available to the icon-scan diagnostic,
+    -- which is a deliberate, user-initiated sweep and reports what it changed.
+    local lastSequencePath = GSE.GUI.GetLastSequenceEditorPath and GSE.GUI.GetLastSequenceEditorPath()
+    local classID = tostring(GSE.GetCurrentClassID and GSE.GetCurrentClassID() or "")
+
+    -- Restore the last-opened sequence. In "show all classes" mode the tree
+    -- shows every class, so restore it regardless of the class/spec the player
+    -- is currently on. In current-class mode the tree only shows the current
+    -- class, so only restore the path when it belongs to the current class
+    -- (otherwise it would not be visible); fall back to the current class.
+    -- Paths look like "Sequences\001<classID>\001..." so check segment 2.
+    --
+    -- Class 0 (Global) is the exception: the tree draws it alongside the
+    -- current class whenever the Global filter is on, so a Global path IS
+    -- visible and must survive this test. It never did -- classID is the
+    -- player's class, never 0 -- so the last sequence you opened was silently
+    -- dropped whenever it was a Global one.
+    local showingAllClasses = GSEOptions and GSEOptions.filterList and GSEOptions.filterList[Statics.All]
+    local showingGlobal = GSEOptions and GSEOptions.filterList and GSEOptions.filterList[Statics.Global]
+    if lastSequencePath and not showingAllClasses then
+        local parts = {("\001"):split(lastSequencePath)}
+        local pathClass = parts[2] and tostring(parts[2]) or ""
+        if pathClass ~= classID and not (showingGlobal and tonumber(pathClass) == 0) then
+            lastSequencePath = nil   -- wrong class, fall back to current class
+        end
+    end
+
+    local selectPath = lastSequencePath or "Sequences\001NewSequence"
+    local treeStatus = editframe.treeContainer.status or editframe.treeContainer.localstatus
+
+    -- Attached opening rules: when the tree is DETACHED, a newly opened editor
+    -- opens to wherever the detached tree is already working (e.g. DK Sequence 1)
+    -- instead of refreshing the tree to the normal current-class/last sequence.
+    -- It mirrors the detached tree's expansion + scroll and selects that node
+    -- silently, so opening the window does not refresh or jump the floating menu.
+    local adopted = false
+    if GSE.GUI.navDetached and GSE.GUI.floatOwner and GSE.GUI.floatOwner ~= editframe then
+        local srcTree   = GSE.GUI.floatOwner.treeContainer
+        local srcStatus = srcTree and (srcTree.status or srcTree.localstatus)
+        if srcStatus and srcStatus.selected then
+            -- Mirror expansion + scroll (copy the table, don't share the reference)
+            treeStatus.groups = treeStatus.groups or {}
+            for k in pairs(treeStatus.groups) do treeStatus.groups[k] = nil end
+            for k, v in pairs(srcStatus.groups or {}) do treeStatus.groups[k] = v end
+            treeStatus.scrollvalue = srcStatus.scrollvalue or 0
+            -- Open to the detached tree's current node, silently: SetSelected loads
+            -- the editor content via OnGroupSelected without expanding/RefreshTree.
+            editframe.forceTreeSelection = true
+            --@debug@
+            beforeTree = GSE.NowMs()
+            --@end-debug@
+            editframe.ManageTree()
+            --@debug@
+            afterTree = GSE.NowMs()
+            --@end-debug@
+            if editframe.treeContainer.SetSelected then
+                editframe.treeContainer:SetSelected(srcStatus.selected)
+            end
+            -- One-shot: stop SyncTrees from RevealSelection-refreshing this tree
+            -- when the float follows to it (its menu already matches the source).
+            editframe.treeContainer.skipNextReveal = true
+            adopted = true
+        end
+    end
+
+    if not adopted then
+        treeStatus.groups["Sequences"] = true
+        if classID ~= "" then
+            treeStatus.groups["Sequences\001" .. classID] = true
+        end
+        -- Also expand the class that owns the sequence we are selecting, so a
+        -- last sequence on a different class (All-classes mode) is revealed.
+        if lastSequencePath then
+            local lp = {("\001"):split(lastSequencePath)}
+            if lp[2] and lp[2] ~= "" then
+                treeStatus.groups["Sequences\001" .. tostring(lp[2])] = true
+            end
+            -- Expand the restored SEQUENCE node itself: versionsWanted builds a
+            -- node's version children only when it is expanded or selected at
+            -- build time, and the selection has not happened yet.
+            if lp[3] and lp[3] ~= "" then
+                treeStatus.groups["Sequences\001" .. tostring(lp[2]) .. "\001" .. tostring(lp[3])] = true
+            end
+        end
+        --@debug@
+        beforeTree = GSE.NowMs()
+        --@end-debug@
+        editframe.ManageTree()
+        --@debug@
+        afterTree = GSE.NowMs()
+        --@end-debug@
+        if GSE.GUI.SelectEditorTreePath then
+            GSE.GUI.SelectEditorTreePath(editframe, selectPath)
+        else
+            editframe.treeContainer:SelectByValue(selectPath)
+        end
+    end
+
+    -- Restore last non-sequence area (Variables, Macros, Keybindings) if that was last open
+    local seOpts = GSEOptions and GSEOptions.frameLocations and GSEOptions.frameLocations.sequenceeditor
+    local lastArea = seOpts and seOpts.lastArea
+    if lastArea and lastArea ~= "Sequences" and editframe.RestoreLastNode then
+        C_Timer.After(0.1, function() editframe.RestoreLastNode() end)
+    end
+
+    SetSequenceEditorOpenPreference(true, "sequences")
+    editframe:Show()
+    -- Split, because "the open is slow" has three candidates and they behave
+    -- very differently: CreateEditor builds the whole window and only on the
+    -- FIRST open (later opens reuse it -- which is why Keybindings feels
+    -- instant if Sequences was opened first), ManageTree is O(sequences), and
+    -- select+show covers loading the sequence and drawing its blocks.
+    --@debug@
+    local openTotal = GSE.NowMs() - openStartedAt
+    ReportOpenTiming(
+        string.format("ShowSequences: %.0f ms (CreateEditor %.0f, ManageTree %.0f, select+show %.0f)",
+            openTotal, afterCreate - openStartedAt,
+            afterTree - beforeTree, GSE.NowMs() - afterTree),
+        openTotal
+    )
+    --@end-debug@
 end
 
 local function remoteSeqences(message, seqName)
@@ -7644,6 +7969,10 @@ function GSE.GUICreateNewSequence(editor, name, recordedstring)
     editor.newname          = nil
     editor.Sequence         = sequence
     editor.ClassID          = classid
+    -- A recorded sequence arrives with actions and no icons, and the tree lands
+    -- on its config node, so nothing would call GUILoadEditor for it this
+    -- session. Hydrate it here or its blocks draw blank until the next open.
+    hydrateSequenceIcons(sequence)
     if GSE.GUI.ResetUndo then GSE.GUI.ResetUndo(editor) end
     editor.ManageTree()
     editor.treeContainer:SelectByValue(
@@ -7726,6 +8055,9 @@ function GSE.GUILoadEditor(editor, key, recordedstring)
     editor.newname = nil
     editor.Sequence = sequence
     editor.ClassID = classid
+    -- Fill in any missing action icons for THIS sequence only, now that it is
+    -- decoded and before its blocks draw -- see the note in GSE.ShowSequences.
+    hydrateSequenceIcons(sequence)
     if GSE.GUI.ResetUndo then GSE.GUI.ResetUndo(editor) end
 end
 

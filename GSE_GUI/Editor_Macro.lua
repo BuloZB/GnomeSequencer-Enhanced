@@ -12,6 +12,11 @@ if GSE.isEmpty(GSE.GUI) then GSE.GUI = {} end
 local DecodeMacroEditorText = GSE.DecodeMacroEditorText
 local StoreMacroEditorText = GSE.StoreMacroEditorText
 
+-- Read-only rendered notes stand in for a 3-line editable box. Taller than the
+-- box because rendered notes are prose: NativeUI's SetNumLines(3) is 76px, which
+-- shows barely two wrapped lines once the panel's own padding is taken out.
+local INLINE_NOTES_PANEL_HEIGHT = 120
+
 local function SetEditBoxLabelGap(widget, gap)
     if not (widget and widget.label and widget.editBox and widget.frame) then return end
     local labelHeight = widget.label:GetStringHeight()
@@ -306,24 +311,39 @@ local function showMacro(editframe, node, container)
     -- Help Information shows on the first macro page too (matching the managed page).
     -- source[node.name] is always populated above, so writing .comments is safe even
     -- before "Manage Macro with GSE" is checked.
-    local commentsEditBox = UI:Create("MultiLineEditBox")
-    commentsEditBox:SetLabel(L["Help Information"])
-    ConfigureMacroFieldLabel(commentsEditBox)
-    SetMultiLineLabelGap(commentsEditBox, 2)
-    SetMultiLineContentPadding(commentsEditBox, 2)
-    commentsEditBox:SetNumLines(3)
-    commentsEditBox:SetFullWidth(true)
-    commentsEditBox:DisableButton(true)
-    if source[node.name].comments then
-        commentsEditBox:SetText(source[node.name].comments)
+    --
+    -- Notes written on gse.tools arrive as markdown in `comments`, with the
+    -- server's WoW-escape rendering alongside in `commentsHelp`. Show the
+    -- rendering read-only: raw markdown is unreadable in-game, and an in-game
+    -- edit is discarded anyway -- the server re-derives commentsHelp from
+    -- comments, which is only editable on the website.
+    if not GSE.isEmpty(source[node.name].commentsHelp) and GSE.GUI.CreateReadOnlyNotesPanel then
+        GSE.GUI.CreateReadOnlyNotesPanel(
+            container,
+            L["Help Information"],
+            source[node.name].commentsHelp,
+            {height = INLINE_NOTES_PANEL_HEIGHT}
+        )
+    else
+        local commentsEditBox = UI:Create("MultiLineEditBox")
+        commentsEditBox:SetLabel(L["Help Information"])
+        ConfigureMacroFieldLabel(commentsEditBox)
+        SetMultiLineLabelGap(commentsEditBox, 2)
+        SetMultiLineContentPadding(commentsEditBox, 2)
+        commentsEditBox:SetNumLines(3)
+        commentsEditBox:SetFullWidth(true)
+        commentsEditBox:DisableButton(true)
+        if source[node.name].comments then
+            commentsEditBox:SetText(source[node.name].comments)
+        end
+        commentsEditBox:SetCallback("OnTextChanged", function(self, event, text)
+            source[node.name].comments = text
+        end)
+        commentsEditBox:SetCallback("OnEditFocusLost", function()
+            source[node.name].comments = commentsEditBox:GetText()
+        end)
+        container:AddChild(commentsEditBox)
     end
-    commentsEditBox:SetCallback("OnTextChanged", function(self, event, text)
-        source[node.name].comments = text
-    end)
-    commentsEditBox:SetCallback("OnEditFocusLost", function()
-        source[node.name].comments = commentsEditBox:GetText()
-    end)
-    container:AddChild(commentsEditBox)
 
     if managed then
         local managedMacro = UI:Create("MultiLineEditBox")
@@ -385,6 +405,27 @@ local function showMacro(editframe, node, container)
         managedMacro:SetCallback(
             "OnEditFocusLost",
             function()
+                -- Opening the Tab line builder takes focus off the box, so this
+                -- fires at the START of a build. Compiling then would queue an
+                -- in-game macro update per pick off half-built text.
+                --
+                -- Unlike Editor.lua's guard, this cannot simply wait for "the
+                -- next real focus loss": the box does not necessarily regain
+                -- focus when the menu closes, and what is deferred here is the
+                -- compiled macro WoW actually fires, not a repaint. So retry
+                -- once the session's deadline passes. The session zeroes the
+                -- deadline on a terminal pick, so the usual path is one short
+                -- hop, and re-reading GetText() at that point picks up
+                -- everything the builder wrote.
+                local eb = managedMacro.editBox or managedMacro.editbox
+                local until_ = (eb and eb.gseTabSessionUntil) or 0
+                if until_ > GetTime() then
+                    C_Timer.After((until_ - GetTime()) + 0.1, function()
+                        if (eb.gseTabSessionUntil or 0) > GetTime() then return end
+                        commitManagedMacroCompile(managedMacro:GetText())
+                    end)
+                    return
+                end
                 -- Always reconcile on focus-loss so the compiled macro is current
                 -- regardless of mode/combat (a harmless repeat when live already ran).
                 commitManagedMacroCompile(managedMacro:GetText())
@@ -398,8 +439,12 @@ local function showMacro(editframe, node, container)
             end
         )
 
+        -- Tab line builder. Pass the WIDGET, not its editbox -- the builder
+        -- resolves widget.editBox. Variables are offered here and not on the
+        -- unmanaged page below: commitManagedMacroCompile runs this text
+        -- through GSE.CompileMacroText, which evaluates a leading "=".
         if GSE.OnEditorMacroTab then
-            GSE.OnEditorMacroTab(managedMacro.editBox, editframe.frame)
+            GSE.OnEditorMacroTab(managedMacro, editframe.frame, {variables = true})
         end
 
         -- Match the unmanaged page exactly: show the accept button and drop the
@@ -441,6 +486,12 @@ local function showMacro(editframe, node, container)
                 GSE.EnqueueOOC(oocaction)
             end
         )
+        -- This page had no Tab handler at all. Same builder as the managed
+        -- page, minus GSE variables: this text goes to the in-game macro as
+        -- written, so a "=GSE.V[...]()" line would never be evaluated.
+        if GSE.OnEditorMacroTab then
+            GSE.OnEditorMacroTab(macro, editframe.frame)
+        end
         macro:DisableButton(false)
         -- Push the Macro box down 3px (negative y = down) to match the managed page.
         if macro.SetFlowOffset then macro:SetFlowOffset(0, -3) end
